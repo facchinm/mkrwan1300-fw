@@ -729,7 +729,7 @@ ATEerror_t at_DeviceClass_get(const char *param)
   mib.Type = MIB_DEVICE_CLASS;
   status = LoRaMacMibGetRequestConfirm(&mib);
   CHECK_STATUS(status);
-  AT_PRINTF("%c\r\n", 'A' + mib.Param.Class);
+  AT_PRINTF("+OK=%c\r", 'A' + mib.Param.Class);
 
   return AT_OK;
 }
@@ -906,12 +906,13 @@ ATEerror_t at_ReceiveBinary(const char *param)
 {
   unsigned i;
   
-  AT_PRINTF("%d:", ReceivedDataPort);
+  AT_PRINTF("+RECV=");
+  AT_PRINTF("%d,%d\r\n\n", ReceivedDataPort, ReceivedDataSize);
   for (i = 0; i < ReceivedDataSize; i++)
   {
     AT_PRINTF("%02x", ReceivedData[i]);
   }
-  AT_PRINTF("\r\n");
+  AT_PRINTF("\r");
   ReceivedDataSize = 0;
 
   return AT_OK;
@@ -919,20 +920,125 @@ ATEerror_t at_ReceiveBinary(const char *param)
 
 ATEerror_t at_Receive(const char *param)
 {
-  AT_PRINTF("%d:", ReceivedDataPort);
+  AT_PRINTF("+RECV=");
+  AT_PRINTF("%d,%d\r\n\n", ReceivedDataPort, ReceivedDataSize);
   if (ReceivedDataSize)
   {
     AT_PRINTF("%s", ReceivedData);
     ReceivedDataSize = 0;
   }
-  AT_PRINTF("\r\n");
+  AT_PRINTF("\r");
+
+  return AT_OK;
+}
+
+// Defaults to binary
+#define USE_BINARY   1
+#define USE_HEX    0
+static uint8_t format_send_v2 = USE_HEX;
+
+ATEerror_t at_SendV2(const char *param)
+{
+  LoRaMacStatus_t status;
+  at_ack_set("0");
+
+  size_t length = 0;
+
+  if (tiny_sscanf(param, "%hhu", &length) != 1)
+  {
+    return AT_PARAM_ERROR;
+  }
+  uint8_t data[64];
+  int i = 0;
+  // grab other #len bytes from the serial buffer
+  while (i<length) {
+    if (IsNewCharReceived() == SET) {
+      data[i] = GetNewChar();
+      i++;
+    }
+  }
+
+  status = lora_send(data, length, format_send_v2, 1);
+  CHECK_STATUS(status);
+
+  return AT_OK;
+}
+
+ATEerror_t at_SendV2Confirmation(const char *param)
+{
+  LoRaMacStatus_t status;
+  at_ack_set("1");
+
+  size_t length = 0;
+
+  if (tiny_sscanf(param, "%hhu", &length) != 1)
+  {
+    return AT_PARAM_ERROR;
+  }
+  uint8_t data[64];
+  int i = 0;
+  // grab other #len bytes from the serial buffer
+  while (i<length) {
+    if (IsNewCharReceived() == SET) {
+      data[i] = GetNewChar();
+      i++;
+    }
+  }
+
+  status = lora_send(data, length, format_send_v2, 1);
+  CHECK_STATUS(status);
+
+  return AT_OK;
+}
+
+ATEerror_t at_Port_get(const char *param)
+{
+  print_u(lora_config_application_port_get());
+
+  return AT_OK;
+}
+
+ATEerror_t at_Port_set(const char *param)
+{
+  uint8_t application_port;
+  if (tiny_sscanf(param, "%hhu", &application_port) != 1)
+  {
+    return AT_PARAM_ERROR;
+  }
+  /* set the application port to send to */
+  lora_config_application_port_set(application_port);
+
+  return AT_OK;
+}
+
+ATEerror_t at_Format_get(const char *param)
+{
+  print_u(format_send_v2);
+
+  return AT_OK;
+}
+
+ATEerror_t at_Format_set(const char *param)
+{
+  if (tiny_sscanf(param, "%hhu", &format_send_v2) != 1)
+  {
+    return AT_PARAM_ERROR;
+  }
 
   return AT_OK;
 }
 
 ATEerror_t at_version_get(const char *param)
 {
-  AT_PRINTF(AT_VERSION_STRING"\r\n");
+  AT_PRINTF("+OK=");
+  AT_PRINTF(AT_VERSION_STRING"\r");
+  return AT_OK;
+}
+
+ATEerror_t at_device_get(const char *param)
+{
+  AT_PRINTF("+OK=");
+  AT_PRINTF(AT_DEVICE_STRING"\r");
   return AT_OK;
 }
 
@@ -1044,7 +1150,7 @@ static ATEerror_t translate_status(LoRaMacStatus_t status)
 
 static int sscanf_16_hhx(const char *from, uint8_t *pt)
 {
-  return tiny_sscanf(from, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx:%hhx:%hhx:%hhx:%hhx:%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
+  return tiny_sscanf(from, "%02hhx%02hhx%02hhx%02hhx%02hhx%02hhx%02hhx%02hhx%02hhx%02hhx%02hhx%02hhx%02hhx%02hhx%02hhx%02hhx",
                      &pt[0], &pt[1], &pt[2], &pt[3], &pt[4], &pt[5], &pt[6],
                      &pt[7], &pt[8], &pt[9], &pt[10], &pt[11], &pt[12], &pt[13],
                      &pt[14], &pt[15]);
@@ -1052,7 +1158,7 @@ static int sscanf_16_hhx(const char *from, uint8_t *pt)
 
 static void print_16_02x(uint8_t *pt)
 {
-  AT_PRINTF("%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x\r\n",
+  AT_PRINTF("%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x\r",
             pt[0], pt[1], pt[2], pt[3],
             pt[4], pt[5], pt[6], pt[7],
             pt[8], pt[9], pt[10], pt[11],
@@ -1061,34 +1167,34 @@ static void print_16_02x(uint8_t *pt)
 
 static int sscanf_uint32_as_hhx(const char *from, uint32_t *value)
 {
-  return tiny_sscanf(from, "%hhx:%hhx:%hhx:%hhx",
-                     &((unsigned char *)(value))[0],
-                     &((unsigned char *)(value))[1],
+  return tiny_sscanf(from, "%02hhx%02hhx%02hhx%02hhx",
+                     &((unsigned char *)(value))[3],
                      &((unsigned char *)(value))[2],
-                     &((unsigned char *)(value))[3]);
+                     &((unsigned char *)(value))[1],
+                     &((unsigned char *)(value))[0]);
 }
 
 static void print_uint32_as_02x(uint32_t value)
 {
-  AT_PRINTF("%02x:%02x:%02x:%02x\r\n",
-            (unsigned)((unsigned char *)(&value))[0],
-            (unsigned)((unsigned char *)(&value))[1],
+  AT_PRINTF("%02x%02x%02x%02x\r",
+            (unsigned)((unsigned char *)(&value))[3],
             (unsigned)((unsigned char *)(&value))[2],
-            (unsigned)((unsigned char *)(&value))[3]);
+            (unsigned)((unsigned char *)(&value))[1],
+            (unsigned)((unsigned char *)(&value))[0]);
 }
 
 static void print_8_02x(uint8_t *pt)
 {
-  AT_PRINTF("%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x\r\n",
+  AT_PRINTF("%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x\r",
             pt[0], pt[1], pt[2], pt[3], pt[4], pt[5], pt[6], pt[7]);
 }
 
 static void print_d(int value)
 {
-  AT_PRINTF("%d\r\n", value);
+  AT_PRINTF("+OK=%d\r", value);
 }
 
 static void print_u(unsigned int value)
 {
-  AT_PRINTF("%u\r\n", value);
+  AT_PRINTF("+OK=%u\r", value);
 }

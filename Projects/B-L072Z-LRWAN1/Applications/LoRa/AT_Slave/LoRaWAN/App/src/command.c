@@ -71,6 +71,7 @@ struct ATCommand_s {
 
 /* Private define ------------------------------------------------------------*/
 #define CMD_SIZE 128
+#define NO_HELP
 
 /* Private macro -------------------------------------------------------------*/
 /* Private variables ---------------------------------------------------------*/
@@ -80,14 +81,14 @@ struct ATCommand_s {
  */
 static const char *const ATError_description[] =
 {
-  "\r\nOK\r\n",                     /* AT_OK */
-  "\r\nAT_ERROR\r\n",               /* AT_ERROR */
-  "\r\nAT_PARAM_ERROR\r\n",         /* AT_PARAM_ERROR */
-  "\r\nAT_BUSY_ERROR\r\n",          /* AT_BUSY_ERROR */
-  "\r\nAT_TEST_PARAM_OVERFLOW\r\n", /* AT_TEST_PARAM_OVERFLOW */
-  "\r\nAT_NO_NETWORK_JOINED\r\n",   /* AT_NO_NET_JOINED */
-  "\r\nAT_RX_ERROR\r\n",            /* AT_RX_ERROR */
-  "\r\nerror unknown\r\n",          /* AT_MAX */
+  "+OK\r",                 /* AT_OK */
+  "+ERR\r",                /* AT_ERROR */
+  "+ERR_PARAM\r",          /* AT_PARAM_ERROR */
+  "+ERR_BUSY\r",           /* AT_BUSY_ERROR */
+  "+ERR_PARAM_OVERFLOW\r",   /* AT_TEST_PARAM_OVERFLOW */
+  "+ERR_NO_NETWORK\r",     /* AT_NO_NET_JOINED */
+  "+ERR_RX\r",             /* AT_RX_ERROR */
+  "+ERR_UNKNOWN\r",         /* AT_MAX */
 };
 
 /**
@@ -106,7 +107,6 @@ static const struct ATCommand_s ATCommand[] =
     .run = at_reset,
   },
 
-#ifndef NO_KEY_ADDR_EUI
   {
     .string = AT_DEUI,
     .size_string = sizeof(AT_DEUI) - 1,
@@ -117,8 +117,20 @@ static const struct ATCommand_s ATCommand[] =
     .set = at_return_error,
     .run = at_return_error,
   },
-#endif
   
+#ifndef NO_BAND_RUNTIME_SWITCH
+  {
+    .string = AT_BAND,
+    .size_string = sizeof(AT_BAND) - 1,
+#ifndef NO_HELP
+    .help_string = "AT"AT_BAND ": Get or Set the Regional Band\r\n",
+#endif
+    .get = at_Band_get,
+    .set = at_Band_set,
+    .run = at_return_error,
+  },
+#endif
+
 #ifndef NO_KEY_ADDR_EUI
   {
     .string = AT_DADDR,
@@ -408,6 +420,50 @@ static const struct ATCommand_s ATCommand[] =
   },
   
   {
+ .string = AT_PORT,
+ .size_string = sizeof(AT_PORT) - 1,
+#ifndef NO_HELP
+ .help_string = "AT"AT_PORT ": set application port\r\n",
+#endif
+ .get = at_Port_get,
+ .set = at_Port_set,
+ .run = at_return_error,
+  },
+
+  {
+    .string = AT_CTX,
+    .size_string = sizeof(AT_CTX) - 1,
+#ifndef NO_HELP
+    .help_string = "AT"AT_CTX ": send with confirmation\r\n",
+#endif
+    .get = at_return_error,
+    .set = at_SendV2Confirmation,
+    .run = at_return_error,
+  },
+
+  {
+ .string = AT_UTX,
+ .size_string = sizeof(AT_UTX) - 1,
+#ifndef NO_HELP
+ .help_string = "AT"AT_UTX ": send without confirmation\r\n",
+#endif
+ .get = at_return_error,
+ .set = at_SendV2,
+ .run = at_return_error,
+  },
+
+  {
+ .string = AT_FORMAT,
+ .size_string = sizeof(AT_FORMAT) - 1,
+#ifndef NO_HELP
+ .help_string = "AT"AT_FORMAT ": select hex or binary format\r\n",
+#endif
+ .get = at_Format_get,
+ .set = at_Format_set,
+ .run = at_return_error,
+  },
+
+  {
     .string = AT_VER,
     .size_string = sizeof(AT_VER) - 1,
 #ifndef NO_HELP
@@ -418,6 +474,17 @@ static const struct ATCommand_s ATCommand[] =
     .run = at_return_error,
   },
   
+  {
+    .string = AT_DEV,
+    .size_string = sizeof(AT_DEV) - 1,
+#ifndef NO_HELP
+    .help_string = "AT"AT_DEV ": Get the version of the AT_Slave FW\r\n",
+#endif
+    .get = at_device_get,
+    .set = at_return_error,
+    .run = at_return_error,
+  },
+
   {
     .string = AT_CFM,
     .size_string = sizeof(AT_CFM) - 1,
@@ -598,7 +665,7 @@ void CMD_Process(void)
       i = 0;
       com_error(AT_RX_ERROR);
     }
-    else if ((command[i] == '\r') || (command[i] == '\n'))
+    else if ((command[i] == '\r'))
     {
       if (i != 0)
       {
@@ -636,6 +703,7 @@ static void parse_cmd(const char *cmd)
   ATEerror_t status = AT_OK;
   const struct ATCommand_s *Current_ATCommand;
   int i;
+  uint8_t confirm_set = 0;
 
   if ((cmd[0] != 'A') || (cmd[1] != 'T'))
   {
@@ -681,6 +749,7 @@ static void parse_cmd(const char *cmd)
             status = Current_ATCommand->run(cmd);
             break;
           case '=':
+          case ' ':
             if ((cmd[1] == '?') && (cmd[2] == '\0'))
             {
               status = Current_ATCommand->get(cmd + 1);
@@ -688,6 +757,7 @@ static void parse_cmd(const char *cmd)
             else
             {
               status = Current_ATCommand->set(cmd + 1);
+              confirm_set = 1;
             }
             break;
           case '?':
@@ -707,7 +777,9 @@ static void parse_cmd(const char *cmd)
     }
   }
 
-  com_error(status);
+  if (status != AT_OK || (confirm_set == 1)) {
+    com_error(status);
+  }
 }
 
 /************************ (C) COPYRIGHT STMicroelectronics *****END OF FILE****/
