@@ -63,6 +63,8 @@
    uint8_t DevEui[8];           /*< Device EUI */
    uint8_t JoinEui[8];           /*< Join Eui */
    uint8_t AppKey[16];          /*< Application Key */
+   uint32_t NetworkID;          /*< Network ID */
+   uint32_t DevAddr;            /*< Device Address */
    uint8_t NwkKey[16];          /*< Application Key */
    uint8_t NwkSEncKey[16];         /*< Network Session Key */
    uint8_t AppSKey[16];         /*< Application Session Key */
@@ -80,11 +82,7 @@
 static lora_configuration_t lora_config = 
 {
   .otaa = LORA_ENABLE,
-#if defined( REGION_EU868 )
-  .duty_cycle = LORA_ENABLE,
-#else
   .duty_cycle = LORA_DISABLE,
-#endif
   .DevEui = LORAWAN_DEVICE_EUI,
   .JoinEui = LORAWAN_JOIN_EUI,
   .AppKey = LORAWAN_APP_KEY,
@@ -93,6 +91,8 @@ static lora_configuration_t lora_config =
   .AppSKey = LORAWAN_APP_S_KEY,
   .FNwkSIntKey=LORAWAN_F_NWK_S_INT_KEY,
   .SNwkSIntKey=LORAWAN_S_NWK_S_INT_KEY,
+  .NetworkID = LORAWAN_NETWORK_ID,
+  .DevAddr = LORAWAN_DEVICE_ADDRESS,
   .Rssi = 0,
   .Snr = 0,
   .ReqAck = LORAWAN_UNCONFIRMED_MSG,
@@ -270,6 +270,8 @@ static void McpsIndication( McpsIndication_t *mcpsIndication )
     }
 }
 
+extern LoRaMacRegion_t globalRegion;
+
 /*!
  * \brief   MLME-Confirm event function
  *
@@ -340,12 +342,12 @@ static void MlmeConfirm( MlmeConfirm_t *mlmeConfirm )
                 mibReq.Type = MIB_DEVICE_CLASS;
                 mibReq.Param.Class = CLASS_B;
                 LoRaMacMibSetRequestConfirm( &mibReq );
-                
-#if defined( REGION_AU915 ) || defined( REGION_US915 ) || defined( REGION_US915_HYBRID )
-                mibReq.Type = MIB_PING_SLOT_DATARATE;
-                mibReq.Param.PingSlotDatarate = DR_8;
-                LoRaMacMibSetRequestConfirm( &mibReq );
-#endif
+
+                if (globalRegion == LORAMAC_REGION_AU915 || globalRegion == LORAMAC_REGION_US915 || globalRegion == LORAMAC_REGION_US915_HYBRID) {
+                  mibReq.Type = MIB_PING_SLOT_DATARATE;
+                  mibReq.Param.PingSlotDatarate = DR_8;
+                  LoRaMacMibSetRequestConfirm( &mibReq );
+                }
                 
                 /*notify upper layer*/
                 LoRaMainCallbacks->LORA_ConfirmClass(CLASS_B);
@@ -414,6 +416,10 @@ static void MlmeIndication( MlmeIndication_t *MlmeIndication )
         default:
             break;
     }
+}
+
+void TriggerReinit() {
+  DeviceState = DEVICE_STATE_INIT ;
 }
 
 /**

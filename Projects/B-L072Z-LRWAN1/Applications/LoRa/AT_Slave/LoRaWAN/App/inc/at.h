@@ -80,26 +80,28 @@ typedef enum eATEerror
 #define AT_PRINTF     PRINTF
 
 /* AT Command strings. Commands start with AT */
-#define AT_RESET      "Z"
-#define AT_DEUI       "+DEUI"
-#define AT_DADDR      "+DADDR"
+#define AT_RESET      "+REBOOT"
+#define AT_BAND       "+BAND"
+#define AT_DEUI       "+DEVEUI"
+#define AT_DADDR      "+DEVADDR"
 #define AT_APPKEY     "+APPKEY"
 #define AT_NWKSKEY    "+NWKSKEY"
 #define AT_APPSKEY    "+APPSKEY"
-#define AT_JOINEUI     "+APPEUI" /*to match with V1.0.x specification- For V1.1.x "+APPEUI" will be replaced by "+JOINEUI"*/
+#define AT_JOINEUI    "+APPEUI" /*to match with V1.0.x specification- For V1.1.x "+APPEUI" will be replaced by "+JOINEUI"*/
 #define AT_ADR        "+ADR"
-#define AT_TXP        "+TXP"
+#define AT_TXP        "+RFPOWER"
+#define AT_FORMAT     "+DFORMAT"
 #define AT_DR         "+DR"
-#define AT_DCS        "+DCS"
-#define AT_PNM        "+PNM"
+#define AT_DCS        "+DUTYCYCLE"
+#define AT_PNM        "+NWK"
 #define AT_RX2FQ      "+RX2FQ"
 #define AT_RX2DR      "+RX2DR"
 #define AT_RX1DL      "+RX1DL"
 #define AT_RX2DL      "+RX2DL"
 #define AT_JN1DL      "+JN1DL"
 #define AT_JN2DL      "+JN2DL"
-#define AT_NJM        "+NJM"
-#define AT_NWKID      "+NWKID"
+#define AT_NJM        "+MODE"
+#define AT_NWKID      "+IDNWK"
 #define AT_FCU        "+FCU"
 #define AT_FCD        "+FCD"
 #define AT_CLASS      "+CLASS"
@@ -109,7 +111,11 @@ typedef enum eATEerror
 #define AT_SEND       "+SEND"
 #define AT_RECVB      "+RECVB"
 #define AT_RECV       "+RECV"
+#define AT_UTX        "+UTX"
+#define AT_CTX        "+CTX"
+#define AT_PORT       "+PORT"
 #define AT_VER        "+VER"
+#define AT_DEV        "+DEV"
 #define AT_CFM        "+CFM"
 #define AT_CFS        "+CFS"
 #define AT_SNR        "+SNR"
@@ -175,6 +181,20 @@ ATEerror_t at_JoinEUI_get(const char *param);
  * @retval AT_OK if OK, or an appropriate AT_xxx error code
  */
 ATEerror_t at_JoinEUI_set(const char *param);
+
+/**
+ * @brief  Print RF Band in use
+ * @param  Param string of the AT command
+ * @retval AT_OK if OK, or an appropriate AT_xxx error code
+ */
+ATEerror_t at_Band_get(const char *param);
+
+/**
+ * @brief  Set RF Band in use
+ * @param  Param string of the AT command
+ * @retval AT_OK if OK, or an appropriate AT_xxx error code
+ */
+ATEerror_t at_Band_set(const char *param);
 
 /**
  * @brief  Set DevAddr
@@ -457,6 +477,48 @@ ATEerror_t at_SendBinary(const char *param);
 ATEerror_t at_Send(const char *param);
 
 /**
+ * @brief  Print last received message
+ * @param  String parameter
+ * @retval AT_OK if OK, or an appropriate AT_xxx error code
+ */
+ATEerror_t at_SendV2(const char *param);
+
+/**
+ * @brief  Print last received message
+ * @param  String parameter
+ * @retval AT_OK if OK, or an appropriate AT_xxx error code
+ */
+ATEerror_t at_SendV2Confirmation(const char *param);
+
+/**
+ * @brief  Print last received message
+ * @param  String parameter
+ * @retval AT_OK if OK, or an appropriate AT_xxx error code
+ */
+ATEerror_t at_Format_get(const char *param);
+
+/**
+ * @brief  Print last received message
+ * @param  String parameter
+ * @retval AT_OK if OK, or an appropriate AT_xxx error code
+ */
+ATEerror_t at_Format_set(const char *param);
+
+/**
+ * @brief  Get application port in use
+ * @param  String parameter
+ * @retval AT_OK if OK, or an appropriate AT_xxx error code
+ */
+ATEerror_t at_Port_get(const char *param);
+
+/**
+ * @brief  Set application port
+ * @param  String parameter
+ * @retval AT_OK if OK, or an appropriate AT_xxx error code
+ */
+ATEerror_t at_Port_set(const char *param);
+
+/**
  * @brief  Print last received data in binary format with hexadecimal value
  * @param  String parameter
  * @retval AT_OK if OK, or an appropriate AT_xxx error code
@@ -476,6 +538,13 @@ ATEerror_t at_Receive(const char *param);
  * @retval AT_OK
  */
 ATEerror_t at_version_get(const char *param);
+
+/**
+ * @brief  Print the version of the hardware
+ * @param  String parameter
+ * @retval AT_OK
+ */
+ATEerror_t at_device_get(const char *param);
 
 /**
  * @brief  Set if message acknowledgment is required (1) or not (0)

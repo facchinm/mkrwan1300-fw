@@ -127,7 +127,9 @@ void HW_Init( void )
     NVIC_SetVectorTable( NVIC_VectTab_FLASH, 0x3000 );
 #endif
 
+#if 0
     HW_AdcInit( );
+#endif
 
     Radio.IoInit( );
     
@@ -195,7 +197,8 @@ static void HW_IoDeInit( void )
 
   
   Radio.IoDeInit( );
-  
+  HW_SPI_IoDeInit();
+
 // vcom_IoDeInit( );
 }
 
@@ -214,7 +217,6 @@ void HW_GpioInit(void)
   GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   /* All GPIOs except debug pins (SWCLK and SWD) */
-  GPIO_InitStruct.Pin = GPIO_PIN_All & (~( GPIO_PIN_13 | GPIO_PIN_14) );
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
   
   /* All GPIOs */
@@ -303,14 +305,17 @@ uint32_t HW_GetRandomSeed( void )
   */
 void HW_GetUniqueId( uint8_t *id )
 {
+    // First 3 bytes are Arduino OUI A8-61-0A
+    // Other 5 bytes are derived by STM32 internal ID registers
+
     id[7] = ( ( *( uint32_t* )ID1 )+ ( *( uint32_t* )ID3 ) ) >> 24;
     id[6] = ( ( *( uint32_t* )ID1 )+ ( *( uint32_t* )ID3 ) ) >> 16;
-    id[5] = ( ( *( uint32_t* )ID1 )+ ( *( uint32_t* )ID3 ) ) >> 8;
-    id[4] = ( ( *( uint32_t* )ID1 )+ ( *( uint32_t* )ID3 ) );
-    id[3] = ( ( *( uint32_t* )ID2 ) ) >> 24;
-    id[2] = ( ( *( uint32_t* )ID2 ) ) >> 16;
-    id[1] = ( ( *( uint32_t* )ID2 ) ) >> 8;
-    id[0] = ( ( *( uint32_t* )ID2 ) );
+    id[5] = *((uint32_t *)ID3) & 0xFF;
+    id[4] = *((uint32_t *)ID2) & 0xFF;
+    id[3] = *((uint32_t *)ID1) & 0xFF;
+    id[2] = 0x0A;
+    id[1] = 0x61;
+    id[0] = 0xA8;
 }
 
 uint16_t HW_GetTemperatureLevel( void ) 
@@ -358,6 +363,10 @@ uint8_t HW_GetBatteryLevel( void )
   uint16_t measuredLevel = 0;
   uint32_t batteryLevelmV;
 
+  // Battery voltage is measured by the external uC
+  return 0;
+
+#if 0
   measuredLevel = HW_AdcReadChannel( ADC_CHANNEL_VREFINT ); 
 
   if (measuredLevel == 0)
@@ -382,6 +391,7 @@ uint8_t HW_GetBatteryLevel( void )
     batteryLevel = (( (uint32_t) (batteryLevelmV - VDD_MIN)*LORAWAN_MAX_BAT) /(VDD_BAT-VDD_MIN) ); 
   }
   return batteryLevel;
+#endif
 }
 
 /**
