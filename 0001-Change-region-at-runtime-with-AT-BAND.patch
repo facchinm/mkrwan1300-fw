@@ -1,0 +1,1990 @@
+From f024440eebecbdca89e0951e8e47a4854157818f Mon Sep 17 00:00:00 2001
+From: Martino Facchin <m.facchin@arduino.cc>
+Date: Thu, 6 Sep 2018 09:55:20 +0200
+Subject: [PATCH] Change region at runtime with AT+BAND
+
+make the fw more similar to Murata one
+
+Use proper Arduino MAC Adress
+
+Add passthrough mode and optimize consumptions
+
+Passthrough mode lets you interact with the Semtech chip directly, so you can use any LoRA library out there for point to point communication or anything else.
+Since the STM part is always active during this activity the power consumption is higher than using a standalone chip.
+
+Create README.md
+
+Update README.md
+
+Fix ABP activiation procedure
+
+Add AT+PORT command
+
+update version to 1.1.4
+
+1.1.5 - Fix OTAA returning JOINED too early
+
+Use ASM implementation for faster passthrough
+
+Tested up to 310KHz (MODE0)
+
+Update version to 1.1.6
+
+Add a Makefile for the AT_Slave project.
+
+This also adds a softlink for the linker script, as make uses
+uppercase-s for assembly files.
+
+Fix asm keyword to be portable
+
+Replace asm with __asm__ to allow compilation with -std=c99
+
+Add gitignore for makefile
+---
+ .gitignore                                    |   5 +
+ Drivers/BSP/Components/sx1276/sx1276.c        |   9 +-
+ Makefile                                      | 186 +++++++++++
+ Middlewares/Third_Party/Lora/Mac/LoRaMac.c    |   1 +
+ Middlewares/Third_Party/Lora/Mac/LoRaMac.h    |  98 +++---
+ .../B-L072Z-LRWAN1/mlm32l07x01/.cproject      |   9 +
+ .../B-L072Z-LRWAN1/startup_stm32l072xx.S      |   1 +
+ .../Multi/Applications/LoRa/AT_Slave/inc/at.h |  85 ++++-
+ .../Applications/LoRa/AT_Slave/inc/lora.h     |  13 +-
+ .../Applications/LoRa/AT_Slave/inc/version.h  |   3 +-
+ .../Multi/Applications/LoRa/AT_Slave/src/at.c | 309 ++++++++++++------
+ .../Applications/LoRa/AT_Slave/src/command.c  | 136 +++++---
+ .../Applications/LoRa/AT_Slave/src/lora.c     | 128 +++++---
+ .../Applications/LoRa/AT_Slave/src/main.c     | 110 ++++++-
+ .../LoRa/AT_Slave/src/mlm32l0xx_hw.c          |  27 +-
+ .../Applications/LoRa/AT_Slave/src/vcom.c     |   2 +-
+ README.md                                     |  11 +
+ 17 files changed, 857 insertions(+), 276 deletions(-)
+ create mode 100644 .gitignore
+ create mode 100644 Makefile
+ create mode 120000 Projects/Multi/Applications/LoRa/AT_Slave/SW4STM32/B-L072Z-LRWAN1/startup_stm32l072xx.S
+ create mode 100644 README.md
+
+diff --git a/.gitignore b/.gitignore
+new file mode 100644
+index 0000000..74f0b6f
+--- /dev/null
++++ b/.gitignore
+@@ -0,0 +1,5 @@
++*.o
++*.d
++*.elf
++*.bin
++*.hex
+diff --git a/Drivers/BSP/Components/sx1276/sx1276.c b/Drivers/BSP/Components/sx1276/sx1276.c
+index 4f2efc8..c4b7e56 100644
+--- a/Drivers/BSP/Components/sx1276/sx1276.c
++++ b/Drivers/BSP/Components/sx1276/sx1276.c
+@@ -1237,7 +1237,7 @@ void SX1276Reset( void )
+     DelayMs( 1 );
+ 
+     // Configure RESET as input
+-    initStruct.Mode = GPIO_NOPULL;
++    initStruct.Mode = GPIO_MODE_INPUT;
+     HW_GPIO_Init( RADIO_RESET_PORT, RADIO_RESET_PIN, &initStruct );
+ 
+     // Wait 6 ms
+@@ -1644,7 +1644,8 @@ void SX1276OnDio0Irq( void )
+                     if( ( RadioEvents != NULL ) && ( RadioEvents->RxDone != NULL ) )
+                     {
+                         RadioEvents->RxDone( RxTxBuffer, SX1276.Settings.LoRaPacketHandler.Size, SX1276.Settings.LoRaPacketHandler.RssiValue, SX1276.Settings.LoRaPacketHandler.SnrValue );
+-                        PRINTF( "rxDone\n\r" );
++                        PRINTF( "+ACK\r" );
++                        //PRINTF("+RECV=");
+                     }
+                 }
+                 break;
+@@ -1667,7 +1668,7 @@ void SX1276OnDio0Irq( void )
+                 if( ( RadioEvents != NULL ) && ( RadioEvents->TxDone != NULL ) )
+                 {
+                     RadioEvents->TxDone( );
+-                    PRINTF( "txDone\n\r" );
++                    //PRINTF( "txDone\n\r" );
+                 }
+                 break;
+             }
+@@ -1720,7 +1721,7 @@ void SX1276OnDio1Irq( void )
+                 if( ( RadioEvents != NULL ) && ( RadioEvents->RxTimeout != NULL ) )
+                 {
+                     RadioEvents->RxTimeout( );
+-                    PRINTF( "rxTimeOut\n\r" );
++                    //PRINTF( "rxTimeOut\n\r" );
+                 }
+                 break;
+             default:
+diff --git a/Makefile b/Makefile
+new file mode 100644
+index 0000000..97cc26f
+--- /dev/null
++++ b/Makefile
+@@ -0,0 +1,186 @@
++#
++# Copyright 2018 Fabio Baltieri (fabio.baltieri@gmail.com)
++#
++# Based on the original ben-wpan code written by:
++#   Werner Almesberger, Copyright 2010-2011
++#
++# This program is free software; you can redistribute it and/or modify
++# it under the terms of the GNU General Public License as published by
++# the Free Software Foundation; either version 2 of the License, or
++# (at your option) any later version.
++#
++
++NAME = main
++
++CROSS_COMPILE = arm-none-eabi-
++CC = $(CROSS_COMPILE)gcc
++OBJCOPY = $(CROSS_COMPILE)objcopy
++SIZE = $(CROSS_COMPILE)size
++
++FLASH = st-flash
++FLASHFLAGS = --reset --format ihex
++BOOTLOADER = dfu-util
++BOOTLOADER_FLAGS = -a 0 -s 0x08000000:leave
++
++LINKER_SCRIPT = Projects/Multi/Applications/LoRa/AT_Slave/SW4STM32/B-L072Z-LRWAN1/mlm32l07x01/STM32L072CZYx_FLASH.ld
++
++CFLAGS  = -g -Os -Wall -Wextra -Wno-unused-parameter \
++	  -mcpu=cortex-m0plus -mthumb \
++	  -std=c99 -ffunction-sections -fdata-sections -march=armv6-m -mthumb -mabi=aapcs -mfloat-abi=soft
++LDFLAGS = \
++	  -Wl,--gc-sections,--no-undefined \
++	  -T$(LINKER_SCRIPT) --specs=nosys.specs \
++	  -lm -lc -lgcc
++
++DEFINES = \
++	  -DSTM32L072xx \
++	  -DUSE_B_L072Z_LRWAN1 \
++	  -DUSE_FULL_LL_DRIVER \
++	  -DREGION_EU868 \
++	  -DREGION_AS923 \
++	  -DREGION_AU915 \
++	  -DREGION_CN470 \
++	  -DREGION_CN779 \
++	  -DREGION_EU433 \
++	  -DREGION_IN865 \
++	  -DREGION_KR920 \
++	  -DREGION_US915 \
++	  -DREGION_US915_HYBRID
++
++INCLUDES = \
++	   -IProjects/Multi/Applications/LoRa/AT_Slave/inc \
++	   -IDrivers/BSP/MLM32L07X01 \
++	   -IDrivers/STM32L0xx_HAL_Driver/Inc \
++	   -IDrivers/CMSIS/Device/ST/STM32L0xx/Include \
++	   -IDrivers/CMSIS/Include \
++	   -IMiddlewares/Third_Party/Lora/Crypto \
++	   -IMiddlewares/Third_Party/Lora/Mac \
++	   -IMiddlewares/Third_Party/Lora/Phy \
++	   -IMiddlewares/Third_Party/Lora/Utilities \
++	   -IMiddlewares/Third_Party/Lora/Core \
++	   -IDrivers/BSP/Components/Common \
++	   -IDrivers/BSP/Components/sx1276 \
++	   -IDrivers/BSP/B-L072Z-LRWAN1
++
++OBJS = \
++       Drivers/CMSIS/Device/ST/STM32L0xx/Source/Templates/system_stm32l0xx.o \
++       Drivers/STM32L0xx_HAL_Driver/Src/stm32l0xx_ll_adc.o \
++       Drivers/STM32L0xx_HAL_Driver/Src/stm32l0xx_ll_gpio.o \
++       Drivers/STM32L0xx_HAL_Driver/Src/stm32l0xx_ll_lpuart.o \
++       Drivers/STM32L0xx_HAL_Driver/Src/stm32l0xx_ll_rcc.o \
++       Drivers/STM32L0xx_HAL_Driver/Src/stm32l0xx_ll_rtc.o \
++       Drivers/STM32L0xx_HAL_Driver/Src/stm32l0xx_ll_spi.o \
++       Drivers/BSP/Components/sx1276/sx1276.o \
++       Drivers/BSP/MLM32L07X01/mlm32l07x01.o \
++       Middlewares/Third_Party/Lora/Crypto/aes.o \
++       Middlewares/Third_Party/Lora/Crypto/cmac.o \
++       Middlewares/Third_Party/Lora/Mac/LoRaMac.o \
++       Middlewares/Third_Party/Lora/Mac/LoRaMacCrypto.o \
++       Middlewares/Third_Party/Lora/Mac/region/Region.o \
++       Middlewares/Third_Party/Lora/Mac/region/RegionAS923.o \
++       Middlewares/Third_Party/Lora/Mac/region/RegionAU915.o \
++       Middlewares/Third_Party/Lora/Mac/region/RegionCN470.o \
++       Middlewares/Third_Party/Lora/Mac/region/RegionCN779.o \
++       Middlewares/Third_Party/Lora/Mac/region/RegionCommon.o \
++       Middlewares/Third_Party/Lora/Mac/region/RegionEU433.o \
++       Middlewares/Third_Party/Lora/Mac/region/RegionEU868.o \
++       Middlewares/Third_Party/Lora/Mac/region/RegionIN865.o \
++       Middlewares/Third_Party/Lora/Mac/region/RegionKR920.o \
++       Middlewares/Third_Party/Lora/Mac/region/RegionUS915-Hybrid.o \
++       Middlewares/Third_Party/Lora/Mac/region/RegionUS915.o \
++       Middlewares/Third_Party/Lora/Utilities/delay.o \
++       Middlewares/Third_Party/Lora/Utilities/low_power.o \
++       Middlewares/Third_Party/Lora/Utilities/timeServer.o \
++       Middlewares/Third_Party/Lora/Utilities/utilities.o \
++       Projects/Multi/Applications/LoRa/AT_Slave/src/at.o \
++       Projects/Multi/Applications/LoRa/AT_Slave/src/command.o \
++       Projects/Multi/Applications/LoRa/AT_Slave/src/debug.o \
++       Projects/Multi/Applications/LoRa/AT_Slave/src/hw_gpio.o \
++       Projects/Multi/Applications/LoRa/AT_Slave/src/hw_rtc.o \
++       Projects/Multi/Applications/LoRa/AT_Slave/src/hw_spi.o \
++       Projects/Multi/Applications/LoRa/AT_Slave/src/lora.o \
++       Projects/Multi/Applications/LoRa/AT_Slave/src/main.o \
++       Projects/Multi/Applications/LoRa/AT_Slave/src/mlm32l0xx_hw.o \
++       Projects/Multi/Applications/LoRa/AT_Slave/src/mlm32l0xx_it.o \
++       Projects/Multi/Applications/LoRa/AT_Slave/src/test_rf.o \
++       Projects/Multi/Applications/LoRa/AT_Slave/src/tiny_sscanf.o \
++       Projects/Multi/Applications/LoRa/AT_Slave/src/tiny_vsnprintf.o \
++       Projects/Multi/Applications/LoRa/AT_Slave/src/vcom.o \
++       Projects/Multi/Applications/LoRa/AT_Slave/SW4STM32/B-L072Z-LRWAN1/startup_stm32l072xx.o
++
++
++# ----- Verbosity control -----------------------------------------------------
++
++CC_normal	:= $(CC)
++BUILD_normal	:=
++DEPEND_normal	:= $(CC) -MM -MG
++
++CC_quiet	= @echo "  CC       " $@ && $(CC_normal)
++BUILD_quiet	= @echo "  BUILD    " $@ && $(BUILD_normal)
++DEPEND_quiet	= @$(DEPEND_normal)
++
++ifeq ($(V),1)
++    CC		= $(CC_normal)
++    BUILD	= $(BUILD_normal)
++    DEPEND	= $(DEPEND_normal)
++else
++    CC		= $(CC_quiet)
++    BUILD	= $(BUILD_quiet)
++    DEPEND	= $(DEPEND_quiet)
++endif
++
++# ----- Rules -----------------------------------------------------------------
++
++.PHONY:		all clean
++
++all:		$(NAME)_text.bin $(NAME)_text.hex
++
++$(NAME).elf: $(OBJS)
++	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(OBJS)
++	$(SIZE) $@
++
++%_text.bin: %.elf
++	$(BUILD) $(OBJCOPY) -j .text -j .data -O binary $< $@
++
++%_text.hex: %.elf
++	$(BUILD) $(OBJCOPY) -j .text -j .data -O ihex $< $@
++
++# ----- Cleanup ---------------------------------------------------------------
++
++clean:
++		rm -f $(NAME).bin $(NAME).elf $(NAME).hex
++		rm -f $(NAME)_text.{bin,hex}
++		rm -f $(OBJS) $(OBJS:.o=.d)
++		rm -f *~
++
++# ----- Dependencies ----------------------------------------------------------
++
++MKDEP =									\
++	$(DEPEND) $(CFLAGS) $(DEFINES) $(INCLUDES) $< |							\
++	  sed 								\
++	    -e 's|^$(basename $(notdir $<)).o:|$@:|'			\
++	    -e '/^\(.*:\)\? */{p;s///;s/ *\\\?$$/ /;s/  */:\n/g;H;}'	\
++	    -e '$${g;p;}'						\
++	    -e d >$(basename $@).d;					\
++	  [ "$${PIPESTATUS[*]}" = "0 0" ] ||				\
++	  { rm -f $(basename $@).d; exit 1; }
++
++%.o: %.c
++	$(CC) $(CFLAGS) $(DEFINES) $(INCLUDES) -c $< -o $@
++	$(MKDEP)
++
++%.o: %.S
++	$(CC) $(CFLAGS) $(DEFINES) $(INCLUDES) -D__ASSEMBLY__ -c $< -o $@
++	$(MKDEP)
++
++-include $(OBJS:.o=.d)
++
++# ----- Programming and device control ----------------------------------------
++
++.PHONY: load boot
++
++load: $(NAME)_text.hex
++	$(FLASH) $(FLASHFLAGS) write $(NAME)_text.hex
++
++boot: $(NAME)_text.bin
++	$(BOOTLOADER) $(BOOTLOADER_FLAGS) -D $(NAME)_text.bin
+diff --git a/Middlewares/Third_Party/Lora/Mac/LoRaMac.c b/Middlewares/Third_Party/Lora/Mac/LoRaMac.c
+index e71908b..732bc1f 100644
+--- a/Middlewares/Third_Party/Lora/Mac/LoRaMac.c
++++ b/Middlewares/Third_Party/Lora/Mac/LoRaMac.c
+@@ -2319,6 +2319,7 @@ LoRaMacStatus_t LoRaMacInitialization( LoRaMacPrimitives_t *primitives, LoRaMacC
+     LoRaMacPrimitives = primitives;
+     LoRaMacCallbacks = callbacks;
+     LoRaMacRegion = region;
++    McpsIndication.Region = region;
+ 
+     LoRaMacFlags.Value = 0;
+ 
+diff --git a/Middlewares/Third_Party/Lora/Mac/LoRaMac.h b/Middlewares/Third_Party/Lora/Mac/LoRaMac.h
+index 8e479d2..08d4d44 100644
+--- a/Middlewares/Third_Party/Lora/Mac/LoRaMac.h
++++ b/Middlewares/Third_Party/Lora/Mac/LoRaMac.h
+@@ -142,6 +142,53 @@ typedef enum eDeviceClass
+     CLASS_C,
+ }DeviceClass_t;
+ 
++/*!
++ * LoRaMAC region enumeration
++ */
++typedef enum eLoRaMacRegion_t
++{
++    /*!
++     * AS band on 923MHz
++     */
++    LORAMAC_REGION_AS923,
++    /*!
++     * Australian band on 915MHz
++     */
++    LORAMAC_REGION_AU915,
++    /*!
++     * Chinese band on 470MHz
++     */
++    LORAMAC_REGION_CN470,
++    /*!
++     * Chinese band on 779MHz
++     */
++    LORAMAC_REGION_CN779,
++    /*!
++     * European band on 433MHz
++     */
++    LORAMAC_REGION_EU433,
++    /*!
++     * European band on 868MHz
++     */
++    LORAMAC_REGION_EU868,
++    /*!
++     * South korean band on 920MHz
++     */
++    LORAMAC_REGION_KR920,
++    /*!
++     * India band on 865MHz
++     */
++    LORAMAC_REGION_IN865,
++    /*!
++     * North american band on 915MHz
++     */
++    LORAMAC_REGION_US915,
++    /*!
++     * North american band on 915MHz with a maximum of 16 channels
++     */
++    LORAMAC_REGION_US915_HYBRID,
++}LoRaMacRegion_t;
++
+ /*!
+  * LoRaMAC channels parameters definition
+  */
+@@ -939,6 +986,10 @@ typedef struct sMcpsIndication
+      * The downlink counter value for the received frame
+      */
+     uint32_t DownLinkCounter;
++    /*!
++    * The region currently in use
++    */
++    LoRaMacRegion_t Region;
+ }McpsIndication_t;
+ 
+ /*!
+@@ -1610,53 +1661,6 @@ typedef enum eLoRaMacStatus
+     LORAMAC_STATUS_REGION_NOT_SUPPORTED
+ }LoRaMacStatus_t;
+ 
+-/*!
+- * LoRaMAC region enumeration
+- */
+-typedef enum eLoRaMacRegion_t
+-{
+-    /*!
+-     * AS band on 923MHz
+-     */
+-    LORAMAC_REGION_AS923,
+-    /*!
+-     * Australian band on 915MHz
+-     */
+-    LORAMAC_REGION_AU915,
+-    /*!
+-     * Chinese band on 470MHz
+-     */
+-    LORAMAC_REGION_CN470,
+-    /*!
+-     * Chinese band on 779MHz
+-     */
+-    LORAMAC_REGION_CN779,
+-    /*!
+-     * European band on 433MHz
+-     */
+-    LORAMAC_REGION_EU433,
+-    /*!
+-     * European band on 868MHz
+-     */
+-    LORAMAC_REGION_EU868,
+-    /*!
+-     * South korean band on 920MHz
+-     */
+-    LORAMAC_REGION_KR920,
+-    /*!
+-     * India band on 865MHz
+-     */
+-    LORAMAC_REGION_IN865,
+-    /*!
+-     * North american band on 915MHz
+-     */
+-    LORAMAC_REGION_US915,
+-    /*!
+-     * North american band on 915MHz with a maximum of 16 channels
+-     */
+-    LORAMAC_REGION_US915_HYBRID,
+-}LoRaMacRegion_t;
+-
+ /*!
+  * LoRaMAC events structure
+  * Used to notify upper layers of MAC events
+diff --git a/Projects/Multi/Applications/LoRa/AT_Slave/SW4STM32/B-L072Z-LRWAN1/mlm32l07x01/.cproject b/Projects/Multi/Applications/LoRa/AT_Slave/SW4STM32/B-L072Z-LRWAN1/mlm32l07x01/.cproject
+index 004ec6f..6320952 100644
+--- a/Projects/Multi/Applications/LoRa/AT_Slave/SW4STM32/B-L072Z-LRWAN1/mlm32l07x01/.cproject
++++ b/Projects/Multi/Applications/LoRa/AT_Slave/SW4STM32/B-L072Z-LRWAN1/mlm32l07x01/.cproject
+@@ -56,6 +56,15 @@
+ 									<listOptionValue builtIn="false" value=" USE_B_L072Z_LRWAN1"/>
+ 									<listOptionValue builtIn="false" value=" USE_FULL_LL_DRIVER"/>
+ 									<listOptionValue builtIn="false" value=" REGION_EU868"/>
++									<listOptionValue builtIn="false" value="REGION_AS923"/>
++									<listOptionValue builtIn="false" value="REGION_AU915"/>
++									<listOptionValue builtIn="false" value="REGION_CN470"/>
++									<listOptionValue builtIn="false" value="REGION_CN779"/>
++									<listOptionValue builtIn="false" value="REGION_EU433"/>
++									<listOptionValue builtIn="false" value="REGION_IN865"/>
++									<listOptionValue builtIn="false" value="REGION_KR920"/>
++									<listOptionValue builtIn="false" value="REGION_US915"/>
++									<listOptionValue builtIn="false" value="REGION_US915_HYBRID"/>
+ 								</option>
+ 								<option id="fr.ac6.managedbuild.gnu.c.compiler.option.misc.other.1634922875" superClass="fr.ac6.managedbuild.gnu.c.compiler.option.misc.other" useByScannerDiscovery="false" value="-fmessage-length=0" valueType="string"/>
+ 								<option id="gnu.c.compiler.option.dialect.std.1288983942" name="Language standard" superClass="gnu.c.compiler.option.dialect.std" useByScannerDiscovery="true" value="gnu.c.compiler.dialect.default" valueType="enumerated"/>
+diff --git a/Projects/Multi/Applications/LoRa/AT_Slave/SW4STM32/B-L072Z-LRWAN1/startup_stm32l072xx.S b/Projects/Multi/Applications/LoRa/AT_Slave/SW4STM32/B-L072Z-LRWAN1/startup_stm32l072xx.S
+new file mode 120000
+index 0000000..4022139
+--- /dev/null
++++ b/Projects/Multi/Applications/LoRa/AT_Slave/SW4STM32/B-L072Z-LRWAN1/startup_stm32l072xx.S
+@@ -0,0 +1 @@
++startup_stm32l072xx.s
+\ No newline at end of file
+diff --git a/Projects/Multi/Applications/LoRa/AT_Slave/inc/at.h b/Projects/Multi/Applications/LoRa/AT_Slave/inc/at.h
+index aa2f0bf..5e5ee69 100644
+--- a/Projects/Multi/Applications/LoRa/AT_Slave/inc/at.h
++++ b/Projects/Multi/Applications/LoRa/AT_Slave/inc/at.h
+@@ -79,26 +79,28 @@ typedef enum eATEerror
+ #define AT_PRINTF(...)     vcom_Send(__VA_ARGS__)
+ 
+ /* AT Command strings. Commands start with AT */
+-#define AT_RESET      "Z"
+-#define AT_DEUI       "+DEUI"
+-#define AT_DADDR      "+DADDR"
++#define AT_RESET      "+REBOOT"
++#define AT_BAND       "+BAND"
++#define AT_DEUI       "+DEVEUI"
++#define AT_DADDR      "+DEVADDR"
+ #define AT_APPKEY     "+APPKEY"
+ #define AT_NWKSKEY    "+NWKSKEY"
+ #define AT_APPSKEY    "+APPSKEY"
+ #define AT_APPEUI     "+APPEUI"
+ #define AT_ADR        "+ADR"
+-#define AT_TXP        "+TXP"
++#define AT_TXP        "+RFPOWER"
++#define AT_FORMAT     "+DFORMAT"
+ #define AT_DR         "+DR"
+-#define AT_DCS        "+DCS"
+-#define AT_PNM        "+PNM"
++#define AT_DCS        "+DUTYCYCLE"
++#define AT_PNM        "+NWK"
+ #define AT_RX2FQ      "+RX2FQ"
+ #define AT_RX2DR      "+RX2DR"
+ #define AT_RX1DL      "+RX1DL"
+ #define AT_RX2DL      "+RX2DL"
+ #define AT_JN1DL      "+JN1DL"
+ #define AT_JN2DL      "+JN2DL"
+-#define AT_NJM        "+NJM"
+-#define AT_NWKID      "+NWKID"
++#define AT_NJM        "+MODE"
++#define AT_NWKID      "+IDNWK"
+ #define AT_FCU        "+FCU"
+ #define AT_FCD        "+FCD"
+ #define AT_CLASS      "+CLASS"
+@@ -108,7 +110,11 @@ typedef enum eATEerror
+ #define AT_SEND       "+SEND"
+ #define AT_RECVB      "+RECVB"
+ #define AT_RECV       "+RECV"
++#define AT_UTX		  "+UTX"
++#define AT_CTX		  "+CTX"
++#define AT_PORT       "+PORT"
+ #define AT_VER        "+VER"
++#define AT_DEV        "+DEV"
+ #define AT_CFM        "+CFM"
+ #define AT_CFS        "+CFS"
+ #define AT_SNR        "+SNR"
+@@ -175,6 +181,20 @@ ATEerror_t at_AppEUI_get(const char *param);
+  */
+ ATEerror_t at_AppEUI_set(const char *param);
+ 
++/**
++ * @brief  Print RF Band in use
++ * @param  Param string of the AT command
++ * @retval AT_OK if OK, or an appropriate AT_xxx error code
++ */
++ATEerror_t at_Band_get(const char *param);
++
++/**
++ * @brief  Set RF Band in use
++ * @param  Param string of the AT command
++ * @retval AT_OK if OK, or an appropriate AT_xxx error code
++ */
++ATEerror_t at_Band_set(const char *param);
++
+ /**
+  * @brief  Set DevAddr
+  * @param  String pointing to provided DevAddr
+@@ -484,6 +504,48 @@ ATEerror_t at_SendBinary(const char *param);
+  */
+ ATEerror_t at_Send(const char *param);
+ 
++/**
++ * @brief  Print last received message
++ * @param  String parameter
++ * @retval AT_OK if OK, or an appropriate AT_xxx error code
++ */
++ATEerror_t at_SendV2(const char *param);
++
++/**
++ * @brief  Print last received message
++ * @param  String parameter
++ * @retval AT_OK if OK, or an appropriate AT_xxx error code
++ */
++ATEerror_t at_SendV2Confirmation(const char *param);
++
++/**
++ * @brief  Print last received message
++ * @param  String parameter
++ * @retval AT_OK if OK, or an appropriate AT_xxx error code
++ */
++ATEerror_t at_Format_get(const char *param);
++
++/**
++ * @brief  Print last received message
++ * @param  String parameter
++ * @retval AT_OK if OK, or an appropriate AT_xxx error code
++ */
++ATEerror_t at_Format_set(const char *param);
++
++/**
++ * @brief  Get application port in use
++ * @param  String parameter
++ * @retval AT_OK if OK, or an appropriate AT_xxx error code
++ */
++ATEerror_t at_Port_get(const char *param);
++
++/**
++ * @brief  Set application port
++ * @param  String parameter
++ * @retval AT_OK if OK, or an appropriate AT_xxx error code
++ */
++ATEerror_t at_Port_set(const char *param);
++
+ /**
+  * @brief  Print last received data in binary format with hexadecimal value
+  * @param  String parameter
+@@ -505,6 +567,13 @@ ATEerror_t at_Receive(const char *param);
+  */
+ ATEerror_t at_version_get(const char *param);
+ 
++/**
++ * @brief  Print the version of the hardware
++ * @param  String parameter
++ * @retval AT_OK
++ */
++ATEerror_t at_device_get(const char *param);
++
+ /**
+  * @brief  Set if message acknowledgment is required (1) or not (0)
+  * @param  String parameter
+diff --git a/Projects/Multi/Applications/LoRa/AT_Slave/inc/lora.h b/Projects/Multi/Applications/LoRa/AT_Slave/inc/lora.h
+index 5847706..fc30cd7 100644
+--- a/Projects/Multi/Applications/LoRa/AT_Slave/inc/lora.h
++++ b/Projects/Multi/Applications/LoRa/AT_Slave/inc/lora.h
+@@ -86,6 +86,8 @@ Maintainer: Miguel Luis, Gregory Cristian and Wael Guibene
+    uint8_t DevEui[8];           /*< Device EUI */
+    uint8_t AppEui[8];           /*< Application EUI */
+    uint8_t AppKey[16];          /*< Application Key */
++   uint32_t NetworkID;          /*< Network ID */
++   uint32_t DevAddr;            /*< Device Address */
+    uint8_t NwkSKey[16];         /*< Network Session Key */
+    uint8_t AppSKey[16];         /*< Application Session Key */
+    int16_t Rssi;                /*< Rssi of the received packet */
+@@ -245,7 +247,7 @@ LoRaMacStatus_t lora_join(void);
+  * @param [IN] binary Whether buffer contains raw data or a string of hexadecimal values (ie binary data)
+  * @retval LoRa status
+  */
+-LoRaMacStatus_t lora_send(const char *buf, unsigned size, unsigned binary);
++LoRaMacStatus_t lora_send(const char *buf, unsigned size, unsigned binary, unsigned raw);
+ 
+ /**
+  * @brief Lora Initialisation
+@@ -260,7 +262,14 @@ void lora_Init (LoRaMainCallback_t *callbacks, LoRaParam_t* LoRaParamInit );
+  * @param [IN] none
+  * @retval none
+  */
+-void lora_fsm( void );
++void lora_fsm( LoRaMacRegion_t region );
++
++/**
++ * @brief triggers a reinit when band gets changed
++ * @param none
++ * @retval none
++ */
++void TriggerReinit();
+ 
+ /**
+  * @brief functionl requesting loRa state machine to send data 
+diff --git a/Projects/Multi/Applications/LoRa/AT_Slave/inc/version.h b/Projects/Multi/Applications/LoRa/AT_Slave/inc/version.h
+index 9efb874..06ae830 100644
+--- a/Projects/Multi/Applications/LoRa/AT_Slave/inc/version.h
++++ b/Projects/Multi/Applications/LoRa/AT_Slave/inc/version.h
+@@ -72,7 +72,8 @@ extern "C" {
+ #define TEST_VERSION (uint32_t) 0x00000000  /*1 lsb is always 0 in releases   */
+ #define LRWAN_VERSION  (uint32_t) 0x00001120  /*3 next hex is i_cube release*/
+ #define VERSION   (uint32_t) (LORA_MAC_VERSION | LRWAN_VERSION | TEST_VERSION)
+-#define AT_VERSION_STRING	"1.1.2"
++#define AT_VERSION_STRING	"1.1.6"
++#define AT_DEVICE_STRING	"ARD-078"
+ 
+ /* Exported types ------------------------------------------------------------*/
+ /* External variables --------------------------------------------------------*/
+diff --git a/Projects/Multi/Applications/LoRa/AT_Slave/src/at.c b/Projects/Multi/Applications/LoRa/AT_Slave/src/at.c
+index 3fb97f9..7ff3c85 100644
+--- a/Projects/Multi/Applications/LoRa/AT_Slave/src/at.c
++++ b/Projects/Multi/Applications/LoRa/AT_Slave/src/at.c
+@@ -182,12 +182,14 @@ ATEerror_t at_reset(const char *param)
+ 
+ ATEerror_t at_DevEUI_get(const char *param)
+ {
++  AT_PRINTF("+OK=");
+   print_8_02x(lora_config_deveui_get());
+   return AT_OK;
+ }
+ 
+ ATEerror_t at_AppEUI_get(const char *param)
+ {
++  AT_PRINTF("+OK=");
+   print_8_02x(lora_config_appeui_get());
+   return AT_OK;
+ }
+@@ -195,46 +197,53 @@ ATEerror_t at_AppEUI_get(const char *param)
+ ATEerror_t at_AppEUI_set(const char *param)
+ {
+   uint8_t AppEui[8];
+-  if (tiny_sscanf(param, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
++  if (tiny_sscanf(param, "%02hhx%02hhx%02hhx%02hhx%02hhx%02hhx%02hhx%02hhx",
+                   &AppEui[0], &AppEui[1], &AppEui[2], &AppEui[3],
+                   &AppEui[4], &AppEui[5], &AppEui[6], &AppEui[7]) != 8)
+   {
+     return AT_PARAM_ERROR;
+   }
+-  
++
+   lora_config_appeui_set(AppEui);
+   return AT_OK;
+ }
+ 
+ ATEerror_t at_DevAddr_set(const char *param)
+ {
+-  MibRequestConfirm_t mib;
+-  LoRaMacStatus_t status;
++	uint32_t DevAddr;
++	sscanf_uint32_as_hhx(param, &DevAddr);
+ 
+-  mib.Type = MIB_DEV_ADDR;
+-  if (sscanf_uint32_as_hhx(param, &mib.Param.DevAddr) != 4)
+-  {
+-    return AT_PARAM_ERROR;
+-  }
+-  status = LoRaMacMibSetRequestConfirm(&mib);
+-  CHECK_STATUS(status);
+-  return AT_OK;
++	lora_config_devaddr_set(DevAddr);
++	return AT_OK;
+ }
+ 
+ ATEerror_t at_DevAddr_get(const char *param)
+ {
+-  MibRequestConfirm_t mib;
+-  LoRaMacStatus_t status;
+ 
+-  mib.Type = MIB_DEV_ADDR;
+-  status = LoRaMacMibGetRequestConfirm(&mib);
+-  CHECK_STATUS(status);
+-  print_uint32_as_02x(mib.Param.DevAddr);
++  AT_PRINTF("+OK=");
++  print_uint32_as_02x(lora_config_devaddr_get());
++  return AT_OK;
++}
++
++ATEerror_t at_NetworkID_get(const char *param)
++{
++  AT_PRINTF("+OK=");
++  print_uint32_as_02x(lora_config_networkid_get());
++  return AT_OK;
++}
++
++ATEerror_t at_NetworkID_set(const char *param)
++{
++  uint32_t NetworkID;
++  sscanf_uint32_as_hhx(param, &NetworkID);
++
++  lora_config_networkid_set(NetworkID);
+   return AT_OK;
+ }
+ 
+ ATEerror_t at_AppKey_get(const char *param)
+ {
++  AT_PRINTF("+OK=");
+   print_16_02x(lora_config_appkey_get());
+   return AT_OK;
+ }
+@@ -242,7 +251,8 @@ ATEerror_t at_AppKey_get(const char *param)
+ ATEerror_t at_AppKey_set(const char *param)
+ {
+   uint8_t AppKey[16];
+-  if (sscanf_16_hhx(param, AppKey) != 16)
++  int ret = sscanf_16_hhx(param, AppKey);
++  if (ret != 16)
+   {
+     return AT_PARAM_ERROR;
+   }
+@@ -251,67 +261,65 @@ ATEerror_t at_AppKey_set(const char *param)
+   return AT_OK;
+ }
+ 
+-ATEerror_t at_NwkSKey_get(const char *param)
++extern LoRaMacRegion_t globalRegion;
++ATEerror_t at_Band_get(const char *param)
+ {
+-  MibRequestConfirm_t mib;
+-  LoRaMacStatus_t status;
++  AT_PRINTF("+OK=");
++  print_d(globalRegion);
++  return AT_OK;
++}
+ 
+-  mib.Type = MIB_NWK_SKEY;
+-  status = LoRaMacMibGetRequestConfirm(&mib);
+-  CHECK_STATUS(status);
+-  print_16_02x(mib.Param.NwkSKey);
++ATEerror_t at_Band_set(const char *param)
++{
++  LoRaMacRegion_t region;
++  if (tiny_sscanf(param, "%hhu", &region)  != 1)
++  {
++    return AT_PARAM_ERROR;
++  }
++  if (region != globalRegion) {
++	  globalRegion = region;
++	  TriggerReinit();
++  }
++  return AT_OK;
++}
+ 
++ATEerror_t at_NwkSKey_get(const char *param)
++{
++  AT_PRINTF("+OK=");
++  print_16_02x(lora_config_nwkskey_get());
+   return AT_OK;
+ }
+ 
+ ATEerror_t at_NwkSKey_set(const char *param)
+ {
+-  MibRequestConfirm_t mib;
+-  LoRaMacStatus_t status;
+-  uint8_t NwkSKey[16];
+-
+-  mib.Type = MIB_NWK_SKEY;
+-
+-  if (sscanf_16_hhx(param, NwkSKey) != 16)
++  uint8_t NwkSkey[16];
++  int ret = sscanf_16_hhx(param, NwkSkey);
++  if (ret != 16)
+   {
+     return AT_PARAM_ERROR;
+   }
+ 
+-  mib.Param.NwkSKey = NwkSKey;
+-  status = LoRaMacMibSetRequestConfirm(&mib);
+-  CHECK_STATUS(status);
+-
++  lora_config_nwkskey_set(NwkSkey);
+   return AT_OK;
+ }
+ 
+ ATEerror_t at_AppSKey_get(const char *param)
+ {
+-  MibRequestConfirm_t mib;
+-  LoRaMacStatus_t status;
+-
+-  mib.Type = MIB_APP_SKEY;
+-  status = LoRaMacMibGetRequestConfirm(&mib);
+-  CHECK_STATUS(status);
+-  print_16_02x(mib.Param.AppSKey);
+-
++  AT_PRINTF("+OK=");
++  print_16_02x(lora_config_appskey_get());
+   return AT_OK;
+ }
+ 
+ ATEerror_t at_AppSKey_set(const char *param)
+ {
+-  MibRequestConfirm_t mib;
+-  LoRaMacStatus_t status;
+   uint8_t AppSKey[16];
+-
+-  mib.Type = MIB_APP_SKEY;
+-  if (sscanf_16_hhx(param, AppSKey) != 16)
++  int ret = sscanf_16_hhx(param, AppSKey);
++  if (ret != 16)
+   {
+     return AT_PARAM_ERROR;
+   }
+-  mib.Param.AppSKey = AppSKey;
+-  status = LoRaMacMibSetRequestConfirm(&mib);
+-  CHECK_STATUS(status);
+ 
++  lora_config_appskey_set(AppSKey);
+   return AT_OK;
+ }
+ 
+@@ -329,6 +337,7 @@ ATEerror_t at_ADR_get(const char *param)
+   mib.Type = MIB_ADR;
+   status = LoRaMacMibGetRequestConfirm(&mib);
+   CHECK_STATUS(status);
++  AT_PRINTF("+OK=");
+   print_d(mib.Param.AdrEnable);
+ 
+   return AT_OK;
+@@ -373,9 +382,10 @@ ATEerror_t at_TransmitPower_set(const char *param)
+ {
+   MibRequestConfirm_t mib;
+   LoRaMacStatus_t status;
++  uint8_t ignored;
+ 
+   mib.Type = MIB_CHANNELS_TX_POWER;
+-  if (tiny_sscanf(param, "%hhu", &mib.Param.ChannelsTxPower) != 1)
++  if (tiny_sscanf(param, "%hhu,%hhu", &ignored, &mib.Param.ChannelsTxPower) != 1)
+   {
+     return AT_PARAM_ERROR;
+   }
+@@ -434,10 +444,11 @@ ATEerror_t at_DutyCycle_set(const char *param)
+ 
+ ATEerror_t at_DutyCycle_get(const char *param)
+ {
++  AT_PRINTF("+OK=");
+   if (lora_config_duty_cycle_get() == ENABLE)
+-    AT_PRINTF("1\r\n");
++    AT_PRINTF("1\r");
+   else
+-    AT_PRINTF("0\r\n");
++    AT_PRINTF("0\r");
+ 
+   return AT_OK;
+ }
+@@ -451,6 +462,7 @@ ATEerror_t at_PublicNetwork_get(const char *param)
+   mib.Type = MIB_PUBLIC_NETWORK;
+   status = LoRaMacMibGetRequestConfirm(&mib);
+   CHECK_STATUS(status);
++  AT_PRINTF("+OK=");
+   print_d(mib.Param.EnablePublicNetwork);
+ 
+   return AT_OK;
+@@ -662,6 +674,7 @@ ATEerror_t at_JoinAcceptDelay2_set(const char *param)
+ 
+ ATEerror_t at_NetworkJoinMode_get(const char *param)
+ {
++  AT_PRINTF("+OK=");
+   print_d((lora_config_otaa_get() == ENABLE ? 1 : 0));
+   return AT_OK;
+ }
+@@ -686,35 +699,6 @@ ATEerror_t at_NetworkJoinMode_set(const char *param)
+   return AT_OK;
+ }
+ 
+-ATEerror_t at_NetworkID_get(const char *param)
+-{
+-  MibRequestConfirm_t mib;
+-  LoRaMacStatus_t status;
+-
+-  mib.Type = MIB_NET_ID;
+-  status = LoRaMacMibGetRequestConfirm(&mib);
+-  CHECK_STATUS(status);
+-  print_uint32_as_02x(mib.Param.NetID);
+-
+-  return AT_OK;
+-}
+-
+-ATEerror_t at_NetworkID_set(const char *param)
+-{
+-  MibRequestConfirm_t mib;
+-  LoRaMacStatus_t status;
+-
+-  mib.Type = MIB_NET_ID;
+-  if (sscanf_uint32_as_hhx(param, &mib.Param.NetID) != 4)
+-  {
+-    return AT_PARAM_ERROR;
+-  }
+-  status = LoRaMacMibSetRequestConfirm(&mib);
+-  CHECK_STATUS(status);
+-
+-  return AT_OK;
+-}
+-
+ ATEerror_t at_UplinkCounter_get(const char *param)
+ {
+   MibRequestConfirm_t mib;
+@@ -723,6 +707,7 @@ ATEerror_t at_UplinkCounter_get(const char *param)
+   mib.Type = MIB_UPLINK_COUNTER;
+   status = LoRaMacMibGetRequestConfirm(&mib);
+   CHECK_STATUS(status);
++  AT_PRINTF("+OK=");
+   print_u(mib.Param.UpLinkCounter);
+ 
+   return AT_OK;
+@@ -752,6 +737,7 @@ ATEerror_t at_DownlinkCounter_get(const char *param)
+   mib.Type = MIB_DOWNLINK_COUNTER;
+   status = LoRaMacMibGetRequestConfirm(&mib);
+   CHECK_STATUS(status);
++  AT_PRINTF("+OK=");
+   print_u(mib.Param.DownLinkCounter);
+ 
+   return AT_OK;
+@@ -781,7 +767,7 @@ ATEerror_t at_DeviceClass_get(const char *param)
+   mib.Type = MIB_DEVICE_CLASS;
+   status = LoRaMacMibGetRequestConfirm(&mib);
+   CHECK_STATUS(status);
+-  AT_PRINTF("%c\r\n", 'A' + mib.Param.Class);
++  AT_PRINTF("+OK=%c\r", 'A' + mib.Param.Class);
+ 
+   return AT_OK;
+ }
+@@ -827,6 +813,7 @@ ATEerror_t at_NetworkJoinStatus(const char *param)
+ 
+   if (status == LORAMAC_STATUS_OK)
+   {
++	AT_PRINTF("+OK=");
+     print_d(mibReq.Param.IsNetworkJoined ? 1 : 0);
+     return AT_OK;
+   }
+@@ -837,7 +824,7 @@ ATEerror_t at_SendBinary(const char *param)
+ {
+   LoRaMacStatus_t status;
+ 
+-  status = lora_send(param, strlen(param), 1);
++  status = lora_send(param, strlen(param), 1, 0);
+   CHECK_STATUS(status);
+ 
+   return AT_OK;
+@@ -847,7 +834,7 @@ ATEerror_t at_Send(const char *param)
+ {
+   LoRaMacStatus_t status;
+ 
+-  status = lora_send(param, strlen(param), 0);
++  status = lora_send(param, strlen(param), 0, 0);
+   CHECK_STATUS(status);
+ 
+   return AT_OK;
+@@ -856,13 +843,14 @@ ATEerror_t at_Send(const char *param)
+ ATEerror_t at_ReceiveBinary(const char *param)
+ {
+   unsigned i;
+-  
+-  AT_PRINTF("%d:", ReceivedDataPort);
++
++  AT_PRINTF("+RECV=");
++  AT_PRINTF("%d,%d\r\n\n", ReceivedDataPort, ReceivedDataSize);
+   for (i = 0; i < ReceivedDataSize; i++)
+   {
+     AT_PRINTF("%02x", ReceivedData[i]);
+   }
+-  AT_PRINTF("\r\n");
++  AT_PRINTF("\r");
+   ReceivedDataSize = 0;
+ 
+   return AT_OK;
+@@ -870,20 +858,127 @@ ATEerror_t at_ReceiveBinary(const char *param)
+ 
+ ATEerror_t at_Receive(const char *param)
+ {
+-  AT_PRINTF("%d:", ReceivedDataPort);
++  AT_PRINTF("+RECV=");
++  AT_PRINTF("%d,%d\r\n\n", ReceivedDataPort, ReceivedDataSize);
+   if (ReceivedDataSize)
+   {
+     AT_PRINTF("%s", ReceivedData);
+     ReceivedDataSize = 0;
+   }
+-  AT_PRINTF("\r\n");
++  AT_PRINTF("\r");
++
++  return AT_OK;
++}
++
++// Defaults to binary
++#define USE_BINARY 	1
++#define USE_HEX		0
++static uint8_t format_send_v2 = USE_HEX;
++
++ATEerror_t at_SendV2(const char *param)
++{
++  LoRaMacStatus_t status;
++  at_ack_set("0");
++
++  size_t length = 0;
++
++  if (tiny_sscanf(param, "%hhu", &length) != 1)
++  {
++    return AT_PARAM_ERROR;
++  }
++  uint8_t data[64];
++  int i = 0;
++  // grab other #len bytes from the serial buffer
++  while (i<length) {
++	if (IsNewCharReceived() == SET) {
++		data[i] = GetNewChar();
++		i++;
++    }
++  }
++
++  status = lora_send(data, length, format_send_v2, 1);
++  CHECK_STATUS(status);
++
++  return AT_OK;
++}
++
++ATEerror_t at_SendV2Confirmation(const char *param)
++{
++  LoRaMacStatus_t status;
++  at_ack_set("1");
++
++  size_t length = 0;
++
++  if (tiny_sscanf(param, "%hhu", &length) != 1)
++  {
++	return AT_PARAM_ERROR;
++  }
++  uint8_t data[64];
++  int i = 0;
++  // grab other #len bytes from the serial buffer
++  while (i<length) {
++	if (IsNewCharReceived() == SET) {
++		data[i] = GetNewChar();
++		i++;
++    }
++  }
++
++  status = lora_send(data, length, format_send_v2, 1);
++  CHECK_STATUS(status);
++
++  return AT_OK;
++}
++
++ATEerror_t at_Port_get(const char *param)
++{
++  AT_PRINTF("+OK=");
++  print_u(lora_config_application_port_get());
++
++  return AT_OK;
++}
++
++ATEerror_t at_Port_set(const char *param)
++{
++  uint8_t application_port;
++  if (tiny_sscanf(param, "%hhu", &application_port) != 1)
++  {
++	return AT_PARAM_ERROR;
++  }
++  /* set the application port to send to */
++  lora_config_application_port_set(application_port);
++
++  return AT_OK;
++}
++
++ATEerror_t at_Format_get(const char *param)
++{
++  AT_PRINTF("+OK=");
++  print_u(format_send_v2);
++
++  return AT_OK;
++}
++
++ATEerror_t at_Format_set(const char *param)
++{
++  if (tiny_sscanf(param, "%hhu", &format_send_v2) != 1)
++  {
++	return AT_PARAM_ERROR;
++  }
+ 
+   return AT_OK;
+ }
+ 
+ ATEerror_t at_version_get(const char *param)
+ {
+-  AT_PRINTF(AT_VERSION_STRING"\r\n");
++  AT_PRINTF("+OK=");
++  AT_PRINTF(AT_VERSION_STRING"\r");
++  return AT_OK;
++}
++
++ATEerror_t at_device_get(const char *param)
++{
++  AT_PRINTF("+OK=");
++  AT_PRINTF(AT_DEVICE_STRING"\r");
+   return AT_OK;
+ }
+ 
+@@ -995,7 +1090,7 @@ static ATEerror_t translate_status(LoRaMacStatus_t status)
+ 
+ static int sscanf_16_hhx(const char *from, uint8_t *pt)
+ {
+-  return tiny_sscanf(from, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx:%hhx:%hhx:%hhx:%hhx:%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
++  return tiny_sscanf(from, "%02hhx%02hhx%02hhx%02hhx%02hhx%02hhx%02hhx%02hhx%02hhx%02hhx%02hhx%02hhx%02hhx%02hhx%02hhx%02hhx",
+                      &pt[0], &pt[1], &pt[2], &pt[3], &pt[4], &pt[5], &pt[6],
+                      &pt[7], &pt[8], &pt[9], &pt[10], &pt[11], &pt[12], &pt[13],
+                      &pt[14], &pt[15]);
+@@ -1003,7 +1098,7 @@ static int sscanf_16_hhx(const char *from, uint8_t *pt)
+ 
+ static void print_16_02x(uint8_t *pt)
+ {
+-  AT_PRINTF("%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x\r\n",
++  AT_PRINTF("%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x\r",
+             pt[0], pt[1], pt[2], pt[3],
+             pt[4], pt[5], pt[6], pt[7],
+             pt[8], pt[9], pt[10], pt[11],
+@@ -1012,34 +1107,34 @@ static void print_16_02x(uint8_t *pt)
+ 
+ static int sscanf_uint32_as_hhx(const char *from, uint32_t *value)
+ {
+-  return tiny_sscanf(from, "%hhx:%hhx:%hhx:%hhx",
+-                     &((unsigned char *)(value))[0],
+-                     &((unsigned char *)(value))[1],
++  return tiny_sscanf(from, "%02hhx%02hhx%02hhx%02hhx",
++                     &((unsigned char *)(value))[3],
+                      &((unsigned char *)(value))[2],
+-                     &((unsigned char *)(value))[3]);
++                     &((unsigned char *)(value))[1],
++                     &((unsigned char *)(value))[0]);
+ }
+ 
+ static void print_uint32_as_02x(uint32_t value)
+ {
+-  AT_PRINTF("%02x:%02x:%02x:%02x\r\n",
+-            (unsigned)((unsigned char *)(&value))[0],
+-            (unsigned)((unsigned char *)(&value))[1],
++  AT_PRINTF("%02x%02x%02x%02x\r",
++            (unsigned)((unsigned char *)(&value))[3],
+             (unsigned)((unsigned char *)(&value))[2],
+-            (unsigned)((unsigned char *)(&value))[3]);
++            (unsigned)((unsigned char *)(&value))[1],
++            (unsigned)((unsigned char *)(&value))[0]);
+ }
+ 
+ static void print_8_02x(uint8_t *pt)
+ {
+-  AT_PRINTF("%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x\r\n",
++  AT_PRINTF("%02x%02x%02x%02x%02x%02x%02x%02x\r",
+             pt[0], pt[1], pt[2], pt[3], pt[4], pt[5], pt[6], pt[7]);
+ }
+ 
+ static void print_d(int value)
+ {
+-  AT_PRINTF("%d\r\n", value);
++  AT_PRINTF("%d\r", value);
+ }
+ 
+ static void print_u(unsigned int value)
+ {
+-  AT_PRINTF("%u\r\n", value);
++  AT_PRINTF("%u\r", value);
+ }
+diff --git a/Projects/Multi/Applications/LoRa/AT_Slave/src/command.c b/Projects/Multi/Applications/LoRa/AT_Slave/src/command.c
+index 8abcff1..a19db5b 100644
+--- a/Projects/Multi/Applications/LoRa/AT_Slave/src/command.c
++++ b/Projects/Multi/Applications/LoRa/AT_Slave/src/command.c
+@@ -75,19 +75,21 @@ struct ATCommand_s {
+ /* Private macro -------------------------------------------------------------*/
+ /* Private variables ---------------------------------------------------------*/
+ 
++#define NO_HELP
++
+ /**
+  * @brief  Array corresponding to the description of each possible AT Error
+  */
+ static const char *const ATError_description[] =
+ {
+-  "\r\nOK\r\n",                     /* AT_OK */
+-  "\r\nAT_ERROR\r\n",               /* AT_ERROR */
+-  "\r\nAT_PARAM_ERROR\r\n",         /* AT_PARAM_ERROR */
+-  "\r\nAT_BUSY_ERROR\r\n",          /* AT_BUSY_ERROR */
+-  "\r\nAT_TEST_PARAM_OVERFLOW\r\n", /* AT_TEST_PARAM_OVERFLOW */
+-  "\r\nAT_NO_NETWORK_JOINED\r\n",   /* AT_NO_NET_JOINED */
+-  "\r\nAT_RX_ERROR\r\n",            /* AT_RX_ERROR */
+-  "\r\nerror unknown\r\n",          /* AT_MAX */
++  "+OK\r",                	/* AT_OK */
++  "+ERR\r",               	/* AT_ERROR */
++  "+ERR_PARAM\r",         	/* AT_PARAM_ERROR */
++  "+ERR_BUSY\r",          	/* AT_BUSY_ERROR */
++  "+ERR_PARAM_OVERFLOW\r", 	/* AT_TEST_PARAM_OVERFLOW */
++  "+ERR_NO_NETWORK\r",   	/* AT_NO_NET_JOINED */
++  "+ERR_RX\r",            	/* AT_RX_ERROR */
++  "+ERR_UNKNOWN\r",         /* AT_MAX */
+ };
+ 
+ /**
+@@ -131,7 +133,20 @@ static const struct ATCommand_s ATCommand[] =
+     .run = at_return_error,
+   },
+ #endif
+-  
++
++#ifndef NO_BAND_RUNTIME_SWITCH
++  {
++    .string = AT_BAND,
++    .size_string = sizeof(AT_BAND) - 1,
++#ifndef NO_HELP
++    .help_string = "AT"AT_BAND ": Get or Set the Regional Band\r\n",
++#endif
++    .get = at_Band_get,
++    .set = at_Band_set,
++    .run = at_return_error,
++  },
++#endif
++
+ #ifndef NO_KEY_ADDR_EUI
+   {
+     .string = AT_APPKEY,
+@@ -316,7 +331,6 @@ static const struct ATCommand_s ATCommand[] =
+     .run = at_return_error,
+   },
+ 
+-#ifndef NO_KEY_ADDR_EUI
+   {
+     .string = AT_NWKID,
+     .size_string = sizeof(AT_NWKID) - 1,
+@@ -327,7 +341,6 @@ static const struct ATCommand_s ATCommand[] =
+     .set = at_NetworkID_set,
+     .run = at_return_error,
+   },
+-#endif
+   
+   {
+     .string = AT_FCU,
+@@ -427,6 +440,50 @@ static const struct ATCommand_s ATCommand[] =
+     .set = at_return_error,
+     .run = at_Receive,
+   },
++
++  {
++	.string = AT_PORT,
++	.size_string = sizeof(AT_PORT) - 1,
++#ifndef NO_HELP
++	.help_string = "AT"AT_PORT ": set application port\r\n",
++#endif
++	.get = at_Port_get,
++	.set = at_Port_set,
++	.run = at_return_error,
++  },
++
++  {
++    .string = AT_CTX,
++    .size_string = sizeof(AT_CTX) - 1,
++#ifndef NO_HELP
++    .help_string = "AT"AT_CTX ": send with confirmation\r\n",
++#endif
++    .get = at_return_error,
++    .set = at_SendV2Confirmation,
++    .run = at_return_error,
++  },
++
++  {
++	.string = AT_UTX,
++	.size_string = sizeof(AT_UTX) - 1,
++#ifndef NO_HELP
++	.help_string = "AT"AT_UTX ": send without confirmation\r\n",
++#endif
++	.get = at_return_error,
++	.set = at_SendV2,
++	.run = at_return_error,
++  },
++
++  {
++	.string = AT_FORMAT,
++	.size_string = sizeof(AT_FORMAT) - 1,
++#ifndef NO_HELP
++	.help_string = "AT"AT_FORMAT ": select hex or binary format\r\n",
++#endif
++	.get = at_Format_get,
++	.set = at_Format_set,
++	.run = at_return_error,
++  },
+   
+   {
+     .string = AT_VER,
+@@ -438,6 +495,17 @@ static const struct ATCommand_s ATCommand[] =
+     .set = at_return_error,
+     .run = at_return_error,
+   },
++
++  {
++    .string = AT_DEV,
++    .size_string = sizeof(AT_DEV) - 1,
++#ifndef NO_HELP
++    .help_string = "AT"AT_DEV ": Get the version of the AT_Slave FW\r\n",
++#endif
++    .get = at_device_get,
++    .set = at_return_error,
++    .run = at_return_error,
++  },
+   
+   {
+     .string = AT_CFM,
+@@ -613,7 +681,7 @@ void CMD_Process(void)
+       break;
+     }
+     else
+-    if ((command[i] == '\r') || (command[i] == '\n'))
++    if ((command[i] == '\r'))
+     {
+       if (i != 0)
+       {
+@@ -652,6 +720,7 @@ static void parse_cmd(const char *cmd)
+   ATEerror_t status = AT_OK;
+   const struct ATCommand_s *Current_ATCommand;
+   int i;
++  uint8_t confirm_set = 0;
+ 
+   if ((cmd[0] != 'A') || (cmd[1] != 'T'))
+   {
+@@ -660,22 +729,8 @@ static void parse_cmd(const char *cmd)
+   else
+   if (cmd[2] == '\0')
+   {
+-    /* status = AT_OK; */
+-  }
+-  else
+-  if (cmd[2] == '?')
+-  {
+-#ifdef NO_HELP
+-#else
+-    AT_PRINTF("AT+<CMD>?        : Help on <CMD>\r\n"
+-              "AT+<CMD>         : Run <CMD>\r\n"
+-              "AT+<CMD>=<value> : Set the value\r\n"
+-              "AT+<CMD>=?       : Get the value\r\n");
+-    for (i = 0; i < (sizeof(ATCommand) / sizeof(struct ATCommand_s)); i++)
+-    {
+-      AT_PRINTF(ATCommand[i].help_string);
+-    }
+-#endif
++	/* status = AT_OK; */
++	com_error(status);
+   }
+   else
+   {
+@@ -696,21 +751,13 @@ static void parse_cmd(const char *cmd)
+           case '\0':    /* nothing after the command */
+             status = Current_ATCommand->run(cmd);
+             break;
+-          case '=':
+-            if ((cmd[1] == '?') && (cmd[2] == '\0'))
+-            {
+-              status = Current_ATCommand->get(cmd + 1);
+-            }
+-            else
+-            {
+-              status = Current_ATCommand->set(cmd + 1);
+-            }
+-            break;
+           case '?':
+-#ifndef NO_HELP
+-            AT_PRINTF(Current_ATCommand->help_string);
+-#endif
+-            status = AT_OK;
++            status = Current_ATCommand->get(cmd + 1);
++            break;
++          case '=':
++          case ' ':	// special case for CTX and UTX
++            status = Current_ATCommand->set(cmd + 1);
++            confirm_set = 1;
+             break;
+           default:
+             /* not recognized */
+@@ -722,8 +769,9 @@ static void parse_cmd(const char *cmd)
+       }
+     }
+   }
+-
+-  com_error(status);
++  if (status != AT_OK || (confirm_set == 1)) {
++	  com_error(status);
++  }
+ }
+ 
+ /************************ (C) COPYRIGHT STMicroelectronics *****END OF FILE****/
+diff --git a/Projects/Multi/Applications/LoRa/AT_Slave/src/lora.c b/Projects/Multi/Applications/LoRa/AT_Slave/src/lora.c
+index 3601ccb..5fa9f17 100644
+--- a/Projects/Multi/Applications/LoRa/AT_Slave/src/lora.c
++++ b/Projects/Multi/Applications/LoRa/AT_Slave/src/lora.c
+@@ -68,14 +68,12 @@ Maintainer: Miguel Luis, Gregory Cristian and Wael Guibene
+ static lora_configuration_t lora_config = 
+ {
+   .otaa = ((OVER_THE_AIR_ACTIVATION == 0) ? DISABLE : ENABLE),
+-#if defined( REGION_EU868 )
+-  .duty_cycle = ENABLE,
+-#else
+   .duty_cycle = DISABLE,
+-#endif
+   .DevEui = LORAWAN_DEVICE_EUI,
+   .AppEui = LORAWAN_APPLICATION_EUI,
+   .AppKey = LORAWAN_APPLICATION_KEY,
++  .NetworkID = LORAWAN_NETWORK_ID,
++  .DevAddr = LORAWAN_DEVICE_ADDRESS,
+   .NwkSKey = LORAWAN_NWKSKEY,
+   .AppSKey = LORAWAN_APPSKEY,
+   .Rssi = 0,
+@@ -224,6 +222,10 @@ static void PrepareTxFrame( )
+     }
+ }
+ 
++void TriggerReinit() {
++	DeviceState = DEVICE_STATE_INIT ;
++}
++
+ /*!
+  * \brief   Prepares the payload of the frame
+  *
+@@ -425,9 +427,9 @@ static void McpsIndication( McpsIndication_t *mcpsIndication )
+                     mibReq.Param.AdrEnable = true;
+                     LoRaMacMibSetRequestConfirm( &mibReq );
+ 
+-#if defined( REGION_EU868 )
+-                    LoRaMacTestSetDutyCycleOn( false );
+-#endif
++                    if (mcpsIndication->Region == LORAMAC_REGION_EU868) {
++                    	LoRaMacTestSetDutyCycleOn( false );
++                    }
+                 }
+             }
+             else
+@@ -443,9 +445,7 @@ static void McpsIndication( McpsIndication_t *mcpsIndication )
+                     mibReq.Type = MIB_ADR;
+                     mibReq.Param.AdrEnable = LoRaParamInit->AdrEnable;
+                     LoRaMacMibSetRequestConfirm( &mibReq );
+-#if defined( REGION_EU868 )
+-                lora_config_duty_cycle_set(LORAWAN_DUTYCYCLE_ON ? ENABLE : DISABLE);
+-#endif
++                    lora_config_duty_cycle_set((mcpsIndication->Region == LORAMAC_REGION_EU868) ? ENABLE : DISABLE);
+                     break;
+                 case 1: // (iii, iv)
+                     AppData.BuffSize = 2;
+@@ -487,9 +487,7 @@ static void McpsIndication( McpsIndication_t *mcpsIndication )
+                         mibReq.Type = MIB_ADR;
+                         mibReq.Param.AdrEnable = LoRaParamInit->AdrEnable;
+                         LoRaMacMibSetRequestConfirm( &mibReq );
+-#if defined( REGION_EU868 )
+-                        lora_config_duty_cycle_set(LORAWAN_DUTYCYCLE_ON ? ENABLE : DISABLE);
+-#endif
++                        lora_config_duty_cycle_set((mcpsIndication->Region == LORAMAC_REGION_EU868) ? ENABLE : DISABLE);
+ 
+                         mlmeReq.Type = MLME_JOIN;
+ 
+@@ -652,10 +650,13 @@ LoRaMacStatus_t lora_join(void)
+ /**
+  *  lora Send raw data or binary data
+  */
+-LoRaMacStatus_t lora_send(const char *buf, unsigned bufSize, unsigned binary)
++LoRaMacStatus_t lora_send(const char *buf, unsigned bufSize, unsigned binary, unsigned raw)
+ {
+   uint32_t appport;
+-  
++
++  if (raw == 1) {
++	  goto on_raw;
++  }
+   /* read and set the application port */
+   if (1 != tiny_sscanf(buf, "%u:", &appport))
+   {
+@@ -663,6 +664,9 @@ LoRaMacStatus_t lora_send(const char *buf, unsigned bufSize, unsigned binary)
+     return LORAMAC_STATUS_PARAMETER_INVALID;
+   }
+   
++  /* set the application port to send to */
++  lora_config_application_port_set(appport);
++
+   /* skip the application port */
+   while (('0' <= buf[0]) && (buf[0] <= '9'))
+   {
+@@ -677,6 +681,7 @@ LoRaMacStatus_t lora_send(const char *buf, unsigned bufSize, unsigned binary)
+   buf ++;
+   bufSize --;
+   
++on_raw:
+   OnSendEvent();
+ 
+   if (DeviceState != DEVICE_STATE_SEND)
+@@ -717,10 +722,7 @@ LoRaMacStatus_t lora_send(const char *buf, unsigned bufSize, unsigned binary)
+     memcpy1(AppData.Buff, (uint8_t *)buf, bufSize);
+     AppData.BuffSize = bufSize;
+   }
+-  
+-  /* set the application port to send to */
+-  lora_config_application_port_set(appport);
+-  
++
+   if( NextTx == true )
+   {
+     PrepareTxFrame( );
+@@ -758,10 +760,12 @@ void lora_Init (LoRaMainCallback_t *callbacks, LoRaParam_t* LoRaParam )
+   LoRaMainCallbacks->BoardGetUniqueId(lora_config.DevEui);
+ #endif
+ 
++#if 0
+   PRINTF("If OTAA enabled\n\r"); 
+   PRINTF("DevEui= %02X", lora_config.DevEui[0]) ;for(int i=1; i<8 ; i++) {PRINTF("-%02X", lora_config.DevEui[i]); }; PRINTF("\n\r");
+   PRINTF("AppEui= %02X", lora_config.AppEui[0]) ;for(int i=1; i<8 ; i++) {PRINTF("-%02X", lora_config.AppEui[i]); }; PRINTF("\n\r");
+   PRINTF("AppKey= %02X", lora_config.AppKey[0]) ;for(int i=1; i<16; i++) {PRINTF(" %02X", lora_config.AppKey[i]); }; PRINTF("\n\n\r");
++#endif
+ 
+ #if (STATIC_DEVICE_ADDRESS != 1)
+   // Random seed initialization
+@@ -769,18 +773,21 @@ void lora_Init (LoRaMainCallback_t *callbacks, LoRaParam_t* LoRaParam )
+   // Choose a random device address
+   DevAddr = randr( 0, 0x01FFFFFF );
+ #endif
++
++#if 0
+   PRINTF("If ABP enabled\n\r"); 
+   PRINTF("DevEui= %02X", lora_config.DevEui[0]) ;for(int i=1; i<8 ; i++) {PRINTF("-%02X", lora_config.DevEui[i]); }; PRINTF("\n\r");
+   PRINTF("DevAdd=  %08X\n\r", DevAddr) ;
+   PRINTF("NwkSKey= %02X", lora_config.NwkSKey[0]) ;for(int i=1; i<16 ; i++) {PRINTF(" %02X", lora_config.NwkSKey[i]); }; PRINTF("\n\r");
+   PRINTF("AppSKey= %02X", lora_config.AppSKey[0]) ;for(int i=1; i<16 ; i++) {PRINTF(" %02X", lora_config.AppSKey[i]); }; PRINTF("\n\r");
++#endif
+ }
+ 
+ /**
+  *  lora class A state machine
+  */
+ 
+-void lora_fsm( void)
++void lora_fsm( LoRaMacRegion_t region )
+ {
+   switch( DeviceState )
+   {
+@@ -790,29 +797,7 @@ void lora_fsm( void)
+         LoRaMacPrimitives.MacMcpsIndication = McpsIndication;
+         LoRaMacPrimitives.MacMlmeConfirm = MlmeConfirm;
+         LoRaMacCallbacks.GetBatteryLevel = LoRaMainCallbacks->BoardGetBatteryLevel;
+-#if defined( REGION_AS923 )
+-                LoRaMacInitialization( &LoRaMacPrimitives, &LoRaMacCallbacks, LORAMAC_REGION_AS923 );
+-#elif defined( REGION_AU915 )
+-                LoRaMacInitialization( &LoRaMacPrimitives, &LoRaMacCallbacks, LORAMAC_REGION_AU915 );
+-#elif defined( REGION_CN470 )
+-                LoRaMacInitialization( &LoRaMacPrimitives, &LoRaMacCallbacks, LORAMAC_REGION_CN470 );
+-#elif defined( REGION_CN779 )
+-                LoRaMacInitialization( &LoRaMacPrimitives, &LoRaMacCallbacks, LORAMAC_REGION_CN779 );
+-#elif defined( REGION_EU433 )
+-                LoRaMacInitialization( &LoRaMacPrimitives, &LoRaMacCallbacks, LORAMAC_REGION_EU433 );
+-#elif defined( REGION_IN865 )
+-                LoRaMacInitialization( &LoRaMacPrimitives, &LoRaMacCallbacks, LORAMAC_REGION_IN865 );
+-#elif defined( REGION_EU868 )
+-                LoRaMacInitialization( &LoRaMacPrimitives, &LoRaMacCallbacks, LORAMAC_REGION_EU868 );
+-#elif defined( REGION_KR920 )
+-                LoRaMacInitialization( &LoRaMacPrimitives, &LoRaMacCallbacks, LORAMAC_REGION_KR920 );
+-#elif defined( REGION_US915 )
+-                LoRaMacInitialization( &LoRaMacPrimitives, &LoRaMacCallbacks, LORAMAC_REGION_US915 );
+-#elif defined( REGION_US915_HYBRID )
+-                LoRaMacInitialization( &LoRaMacPrimitives, &LoRaMacCallbacks, LORAMAC_REGION_US915_HYBRID );
+-#else
+-    #error "Please define a region in the compiler options."
+-#endif
++        LoRaMacInitialization( &LoRaMacPrimitives, &LoRaMacCallbacks, region );
+ 
+         TimerInit( &TxNextPacketTimer, OnTxNextPacketTimerEvent );
+         
+@@ -828,8 +813,8 @@ void lora_fsm( void)
+         mibReq.Param.Class= LoRaParamInit->Class;
+         LoRaMacMibSetRequestConfirm( &mibReq );
+ 
+-#if defined( REGION_EU868 )
+-                lora_config_duty_cycle_set(LORAWAN_DUTYCYCLE_ON ? ENABLE : DISABLE);
++        lora_config_duty_cycle_set((region == LORAMAC_REGION_EU868) ? ENABLE : DISABLE);
++
+ 
+ #if( USE_SEMTECH_DEFAULT_CHANNEL_LINEUP == 1 ) 
+                 LoRaMacChannelAdd( 3, ( ChannelParams_t )LC4 );
+@@ -844,7 +829,6 @@ void lora_fsm( void)
+                 LoRaMacMibSetRequestConfirm( &mibReq );
+ #endif
+ 
+-#endif
+       DeviceState = DEVICE_STATE_SLEEP;
+       break;
+     }
+@@ -865,15 +849,16 @@ void lora_fsm( void)
+             LoRaMacMlmeRequest( &mlmeReq );
+             NextTx = false;
+         }
++        DeviceState = DEVICE_STATE_SLEEP;
+       }
+       else
+       {
+         mibReq.Type = MIB_NET_ID;
+-        mibReq.Param.NetID = LORAWAN_NETWORK_ID;
++        mibReq.Param.NetID = lora_config.NetworkID;
+         LoRaMacMibSetRequestConfirm( &mibReq );
+ 
+         mibReq.Type = MIB_DEV_ADDR;
+-        mibReq.Param.DevAddr = DevAddr;
++        mibReq.Param.DevAddr = lora_config.DevAddr;
+         LoRaMacMibSetRequestConfirm( &mibReq );
+ 
+         mibReq.Type = MIB_NWK_SKEY;
+@@ -887,14 +872,15 @@ void lora_fsm( void)
+         mibReq.Type = MIB_NETWORK_JOINED;
+         mibReq.Param.IsNetworkJoined = true;
+         LoRaMacMibSetRequestConfirm( &mibReq );
++
++        DeviceState = DEVICE_STATE_JOINED;
+       }
+-      
+-      DeviceState = DEVICE_STATE_SLEEP;
++
+       break;
+     }
+     case DEVICE_STATE_JOINED:
+     {
+-      PRINTF("JOINED\n\r");
++      PRINTF("+EVENT=1,1\r");
+       DeviceState = DEVICE_STATE_SLEEP;
+       break;
+     }
+@@ -979,6 +965,46 @@ void lora_config_appeui_set(uint8_t appeui[8])
+   memcpy1(lora_config.AppEui, appeui, sizeof(lora_config.AppEui));
+ }
+ 
++uint32_t lora_config_devaddr_get(void)
++{
++  return lora_config.DevAddr;
++}
++
++void lora_config_devaddr_set(uint32_t devaddr)
++{
++  lora_config.DevAddr= devaddr;
++}
++
++void lora_config_networkid_set(uint32_t networkid)
++{
++  lora_config.NetworkID = networkid;
++}
++
++uint32_t lora_config_networkid_get(void)
++{
++  return lora_config.NetworkID;
++}
++
++uint8_t *lora_config_nwkskey_get(void)
++{
++  return lora_config.NwkSKey;
++}
++
++void lora_config_nwkskey_set(uint8_t nwkSKey[16])
++{
++  memcpy1(lora_config.NwkSKey, nwkSKey, sizeof(lora_config.NwkSKey));
++}
++
++uint8_t *lora_config_appskey_get(void)
++{
++  return lora_config.AppSKey;
++}
++
++void lora_config_appskey_set(uint8_t appskey[16])
++{
++  memcpy1(lora_config.AppSKey, appskey, sizeof(lora_config.AppSKey));
++}
++
+ uint8_t *lora_config_appkey_get(void)
+ {
+   return lora_config.AppKey;
+diff --git a/Projects/Multi/Applications/LoRa/AT_Slave/src/main.c b/Projects/Multi/Applications/LoRa/AT_Slave/src/main.c
+index fa6333b..c15f45a 100644
+--- a/Projects/Multi/Applications/LoRa/AT_Slave/src/main.c
++++ b/Projects/Multi/Applications/LoRa/AT_Slave/src/main.c
+@@ -170,6 +170,98 @@ void HW_Main_Init()
+   HW_GpioInit();
+ }
+ 
++static bool goDumb() {
++  // Setup GPIOPB12 as input
++  GPIO_InitTypeDef initStruct={0};
++  initStruct.Mode = GPIO_MODE_INPUT;
++  initStruct.Pull = GPIO_PULLUP;
++  initStruct.Speed = GPIO_SPEED_HIGH;
++
++  HW_GPIO_Init( GPIOB, GPIO_PIN_12, &initStruct );
++
++  return HW_GPIO_Read(GPIOB, GPIO_PIN_12) == 0;
++}
++
++void setupPassthrough() {
++	// input pins
++	GPIO_InitTypeDef initStruct={0};
++	initStruct.Mode = GPIO_MODE_INPUT;
++	initStruct.Pull = GPIO_NOPULL;
++	initStruct.Speed = GPIO_SPEED_HIGH;
++
++	HW_GPIO_Init( GPIOB, GPIO_PIN_13, &initStruct );
++	HW_GPIO_Init( GPIOA, GPIO_PIN_3, &initStruct );
++	HW_GPIO_Init( GPIOA, GPIO_PIN_6, &initStruct );
++	HW_GPIO_Init( GPIOB, GPIO_PIN_4, &initStruct );
++
++	// output pins
++	initStruct.Mode = GPIO_MODE_OUTPUT_PP;
++	initStruct.Pull = GPIO_NOPULL;
++
++	HW_GPIO_Init( GPIOB, GPIO_PIN_3, &initStruct );
++	HW_GPIO_Init( GPIOA, GPIO_PIN_7, &initStruct );
++	HW_GPIO_Init( GPIOA, GPIO_PIN_2, &initStruct );
++#ifdef USE_DIO0_IRQ
++	HW_GPIO_Init( GPIOB, GPIO_PIN_12, &initStruct );
++#endif
++	HW_GPIO_Init( GPIOB, GPIO_PIN_15, &initStruct );
++
++	// reset and SS pins
++	SX1276Reset();
++	HW_GPIO_Init( RADIO_NSS_PORT, RADIO_NSS_PIN, &initStruct );
++#ifdef USE_DIO0_IRQ
++	HW_GPIO_Write( RADIO_NSS_PORT, RADIO_NSS_PIN, 0 );
++#endif
++}
++
++static inline void runPassthrough() {
++	// PB13 -> PB3
++	// PA3 -> PA7
++	// PA6 -> PA2
++	// PB12 -> PB15
++
++	__asm__ volatile (
++		"LDR R0, =0x50000014\n\t"	//GPIOA_BSRR
++		"LDR R1, =0x50000414\n\t"	//GPIOB_BSRR
++		"LDR R2, =0x50000010\n\t"	//GPIOA_IDR
++		"LDR R3, =0x50000410\n\t"	//GPIOB_IDR
++
++		"MOV R6, #1\n\t"
++		"dumb:\n\t"
++
++		"LDR R7, [R3]\n\t"
++
++		//"LSR R4, R7, #13\n\t"
++		//"AND R4, R4, R6\n\t"
++		//"LSL R4, R4, #3\n\t"
++		"LSR R4, R7, #10\n\t"
++		"STR R4, [R1]\n\t"
++
++		"LSR R4, R7, #12\n\t"
++		"AND R4, R4, R6\n\t"
++		"LSL R5, R4, #15\n\t"
++
++		"LDR R7, [R2]\n\t"
++
++		"LSR R4, R7, #3\n\t"
++		"AND R4, R4, R6\n\t"
++		"LSL R4, R4, #7\n\t"
++		"ORR R5, R5, R4\n\t"
++
++		"LSR R4, R7, #6\n\t"
++		"AND R4, R4, R6\n\t"
++		"LSL R4, R4, #2\n\t"
++		"ORR R5, R5, R4\n\t"
++
++		"STR R5, [R0]\n\t"
++
++		"B dumb\n\t"
++	);
++}
++
++
++LoRaMacRegion_t globalRegion = LORAMAC_REGION_EU868;
++
+ int main(void)
+ {
+   /* STM32 HAL library initialization*/
+@@ -178,15 +270,26 @@ int main(void)
+   /* Configure the system clock*/
+   SystemClock_Config();
+ 
++  /* Read SS input (GPIOPB12); if low, enter dumb mode */
++  if (goDumb()) {
++    setupPassthrough();
++	  while (1) {
++        runPassthrough();
++	}
++  }
++
++  HW_GPIO_DeInit( GPIOB, GPIO_PIN_12);
++  HW_GpioInit();
++
+   /* Configure the hardware*/
+   HW_Init();
+ 
+   /* Configure Debug mode */
+-  DBG_Init();
++  //DBG_Init();
+ 
+   /* USER CODE BEGIN 1 */
+   CMD_Init();
+-  PRINTF("ATtention command interface\n\r");
++  PRINTF("+EVENT=0,0");
+   /* USER CODE END 1 */
+ 
+   /* Configure the Lora Stack*/
+@@ -196,7 +299,7 @@ int main(void)
+   while (1)
+   {
+     /* run the LoRa class A state machine*/
+-    lora_fsm();
++    lora_fsm(globalRegion);
+ 
+     /* Handle UART commands */
+     CMD_Process();
+@@ -232,6 +335,7 @@ static void LoraTxData(lora_AppData_t *AppData, FunctionalState *IsTxConfirmed)
+ static void LoraRxData(lora_AppData_t *AppData)
+ {
+    set_at_receive(AppData->Port, AppData->Buff, AppData->BuffSize);
++   at_Receive(NULL);
+ }
+ 
+ #ifdef  USE_FULL_ASSERT
+diff --git a/Projects/Multi/Applications/LoRa/AT_Slave/src/mlm32l0xx_hw.c b/Projects/Multi/Applications/LoRa/AT_Slave/src/mlm32l0xx_hw.c
+index 91eaffc..f633f5c 100644
+--- a/Projects/Multi/Applications/LoRa/AT_Slave/src/mlm32l0xx_hw.c
++++ b/Projects/Multi/Applications/LoRa/AT_Slave/src/mlm32l0xx_hw.c
+@@ -280,7 +280,9 @@ void HW_Init(void)
+     NVIC_SetVectorTable(NVIC_VectTab_FLASH, 0x3000);
+ #endif
+ 
++#if 0
+     HW_AdcInit();
++#endif
+     Radio.IoInit();
+     HW_SPI_Init();
+     HW_RTC_Init();
+@@ -308,7 +310,7 @@ void HW_GpioInit(void)
+   GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
+   GPIO_InitStruct.Pull = GPIO_NOPULL;
+   /* All GPIOs except debug pins (SWCLK and SWD) */
+-  HW_GPIO_Init(GPIOA, GPIO_PIN_All & (~(GPIO_PIN_13 | GPIO_PIN_14)), &GPIO_InitStruct);
++  HW_GPIO_Init(GPIOA, GPIO_PIN_All, &GPIO_InitStruct);
+ 
+   /* All GPIOs */
+   HW_GPIO_Init(GPIOB, GPIO_PIN_All, &GPIO_InitStruct);
+@@ -350,6 +352,9 @@ uint32_t HW_GetRandomSeed(void)
+ 
+ void HW_GetUniqueId(uint8_t *id)
+ {
++  // First 3 bytes are Arduino OUI A8-61-0A
++  // Other 5 bytes are derived by STM32 internal ID registers
++
+   uint32_t id1 = *((uint32_t *)ID1);
+   uint32_t id2 = *((uint32_t *)ID2);
+   uint32_t id3 = *((uint32_t *)ID3);
+@@ -357,12 +362,12 @@ void HW_GetUniqueId(uint8_t *id)
+ 
+   id[7] = id13 >> 24;
+   id[6] = id13 >> 16;
+-  id[5] = id13 >> 8;
+-  id[4] = id13;
+-  id[3] = id2 >> 24;
+-  id[2] = id2 >> 16;
+-  id[1] = id2 >> 8;
+-  id[0] = id2;
++  id[5] = id3 & 0xFF;
++  id[4] = id2 & 0xFF;
++  id[3] = id1 & 0xFF;
++  id[2] = 0x0A;
++  id[1] = 0x61;
++  id[0] = 0xA8;
+ }
+ 
+ uint8_t HW_GetBatteryLevel(void)
+@@ -371,6 +376,10 @@ uint8_t HW_GetBatteryLevel(void)
+   uint16_t measuredLevel = 0;
+   uint32_t batteryLevelmV;
+ 
++  // Battery voltage is measured by the external uC
++  return 0;
++
++#if 0
+   measuredLevel = HW_AdcReadChannel(LL_ADC_CHANNEL_VREFINT);
+ 
+   if (measuredLevel == 0)
+@@ -395,6 +404,7 @@ uint8_t HW_GetBatteryLevel(void)
+     batteryLevel = (((uint32_t) (batteryLevelmV - VDD_MIN) * LORAWAN_MAX_BAT) / (VDD_BAT - VDD_MIN));
+   }
+   return batteryLevel;
++#endif
+ }
+ 
+ void HW_EnterStopMode(void)
+@@ -415,7 +425,7 @@ void HW_EnterStopMode(void)
+ 
+   RESTORE_PRIMASK();
+ 
+-  /* Enter Stop Mode - is a LL implementatin of HAL_PWR_EnterSTOPMode(PWR_LOWPOWERREGULATOR_ON, PWR_STOPENTRY_WFI) */
++  /* Enter Stop Mode - is a LL implementation of HAL_PWR_EnterSTOPMode(PWR_LOWPOWERREGULATOR_ON, PWR_STOPENTRY_WFI) */
+   /* Select the regulator state in Stop mode ---------------------------------*/
+   tmpreg = PWR->CR;
+ 
+@@ -522,6 +532,7 @@ static void HW_IoDeInit(void)
+   HW_GPIO_Init(RADIO_NSS_PORT, RADIO_NSS_PIN, &initStruct);
+ 
+   Radio.IoDeInit();
++  HW_SPI_IoDeInit();
+   //vcom_IoDeInit();
+ }
+ 
+diff --git a/Projects/Multi/Applications/LoRa/AT_Slave/src/vcom.c b/Projects/Multi/Applications/LoRa/AT_Slave/src/vcom.c
+index dfa3b81..3792e56 100644
+--- a/Projects/Multi/Applications/LoRa/AT_Slave/src/vcom.c
++++ b/Projects/Multi/Applications/LoRa/AT_Slave/src/vcom.c
+@@ -114,7 +114,7 @@ void vcom_Init(void)
+   UARTX_CLK_ENABLE();
+   vcom_IoInit();
+ 
+-  LPUART_InitStruct.BaudRate = 9600;
++  LPUART_InitStruct.BaudRate = 19200;
+   LPUART_InitStruct.DataWidth = LL_LPUART_DATAWIDTH_8B;
+   LPUART_InitStruct.StopBits = LL_LPUART_STOPBITS_1;
+   LPUART_InitStruct.Parity = LL_LPUART_PARITY_NONE;
+diff --git a/README.md b/README.md
+new file mode 100644
+index 0000000..be7ef21
+--- /dev/null
++++ b/README.md
+@@ -0,0 +1,11 @@
++# MKRWAN1300 FIRMWARE
++
++This package contains the firmware for Murata CMWX1ZZABZ-078 module.
++
++It is derived from [I-CUBE-LRWAN](http://www.st.com/en/embedded-software/i-cube-lrwan.html), with some new APIs (like the ability to switch band at runtime, not only at compile time).
++
++The project is provided a [System Workbench for STM32](http://www.openstm32.org/System%2BWorkbench%2Bfor%2BSTM32) project, but can also be compiled in Eclipse after following [this](http://www.openstm32.org/Installing%2BSystem%2BWorkbench%2Bfor%2BSTM32%2Bfrom%2BEclipse#Important_note_about_your_MAC_OSX_host_version) guide
++
++[Releases](https://github.com/bcmi-labs/mkrwan1300-fw/releases) contains the precompiled firmware that can be uploaded either using FWUpdaterBridge or MKRWANFWUpdate_standalone examples from in https://github.com/arduino-libraries/MKRWAN
++
++All the code maintains its original license.
+-- 
+2.18.0
+
