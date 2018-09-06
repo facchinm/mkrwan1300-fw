@@ -453,17 +453,6 @@ static const struct ATCommand_s ATCommand[] =
   },
 
   {
- .string = AT_FORMAT,
- .size_string = sizeof(AT_FORMAT) - 1,
-#ifndef NO_HELP
- .help_string = "AT"AT_FORMAT ": select hex or binary format\r\n",
-#endif
- .get = at_Format_get,
- .set = at_Format_set,
- .run = at_return_error,
-  },
-
-  {
     .string = AT_VER,
     .size_string = sizeof(AT_VER) - 1,
 #ifndef NO_HELP

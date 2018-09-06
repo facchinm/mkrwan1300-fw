@@ -327,6 +327,29 @@ ATEerror_t at_AppSKey_set(const char *param)
   return AT_OK;
 }
 
+extern LoRaMacRegion_t globalRegion;
+ATEerror_t at_Band_get(const char *param)
+{
+  MibRequestConfirm_t mib;
+  LoRaMacStatus_t status;
+  print_d(globalRegion);
+  return AT_OK;
+}
+
+ATEerror_t at_Band_set(const char *param)
+{
+  LoRaMacRegion_t region;
+  if (tiny_sscanf(param, "%hhu", &region)  != 1)
+  {
+    return AT_PARAM_ERROR;
+  }
+  if (region != globalRegion) {
+   globalRegion = region;
+   LORA_ReInit();
+  }
+  return AT_OK;
+}
+
 ATEerror_t at_Certif( const char *param )
 {
   lora_wan_certif( );
@@ -935,12 +958,12 @@ ATEerror_t at_Receive(const char *param)
 // Defaults to binary
 #define USE_BINARY   1
 #define USE_HEX    0
-static uint8_t format_send_v2 = USE_HEX;
 
-ATEerror_t at_SendV2(const char *param)
+static uint8_t global_port_send_v2 = 0;
+
+static ATEerror_t at_SendV2Ack(const char *param, bool ack)
 {
   LoRaMacStatus_t status;
-  at_ack_set("0");
 
   size_t length = 0;
 
@@ -951,80 +974,54 @@ ATEerror_t at_SendV2(const char *param)
   uint8_t data[64];
   int i = 0;
   // grab other #len bytes from the serial buffer
+
+  /* Send v2 will not work with the new architecture 
   while (i<length) {
     if (IsNewCharReceived() == SET) {
       data[i] = GetNewChar();
       i++;
     }
   }
+  */
 
-  status = lora_send(data, length, format_send_v2, 1);
+  if (length > LORAWAN_APP_DATA_BUFF_SIZE)
+  {
+    length = LORAWAN_APP_DATA_BUFF_SIZE;
+  }
+  memcpy1(AppData.Buff, (uint8_t *)data, length);
+  AppData.BuffSize = length;
+  AppData.Port = global_port_send_v2;
+
+  status = LORA_send( &AppData, ack ? LORAWAN_CONFIRMED_MSG : LORAWAN_UNCONFIRMED_MSG );
   CHECK_STATUS(status);
 
   return AT_OK;
+}
+
+ATEerror_t at_SendV2(const char *param)
+{
+  at_SendV2Ack(param, false);
 }
 
 ATEerror_t at_SendV2Confirmation(const char *param)
 {
-  LoRaMacStatus_t status;
-  at_ack_set("1");
-
-  size_t length = 0;
-
-  if (tiny_sscanf(param, "%hhu", &length) != 1)
-  {
-    return AT_PARAM_ERROR;
-  }
-  uint8_t data[64];
-  int i = 0;
-  // grab other #len bytes from the serial buffer
-  while (i<length) {
-    if (IsNewCharReceived() == SET) {
-      data[i] = GetNewChar();
-      i++;
-    }
-  }
-
-  status = lora_send(data, length, format_send_v2, 1);
-  CHECK_STATUS(status);
-
-  return AT_OK;
+  at_SendV2Ack(param, true);
 }
+
 
 ATEerror_t at_Port_get(const char *param)
 {
-  print_u(lora_config_application_port_get());
+  print_u(global_port_send_v2);
 
   return AT_OK;
 }
 
 ATEerror_t at_Port_set(const char *param)
 {
-  uint8_t application_port;
-  if (tiny_sscanf(param, "%hhu", &application_port) != 1)
+  if (tiny_sscanf(param, "%hhu", &global_port_send_v2) != 1)
   {
     return AT_PARAM_ERROR;
   }
-  /* set the application port to send to */
-  lora_config_application_port_set(application_port);
-
-  return AT_OK;
-}
-
-ATEerror_t at_Format_get(const char *param)
-{
-  print_u(format_send_v2);
-
-  return AT_OK;
-}
-
-ATEerror_t at_Format_set(const char *param)
-{
-  if (tiny_sscanf(param, "%hhu", &format_send_v2) != 1)
-  {
-    return AT_PARAM_ERROR;
-  }
-
   return AT_OK;
 }
 

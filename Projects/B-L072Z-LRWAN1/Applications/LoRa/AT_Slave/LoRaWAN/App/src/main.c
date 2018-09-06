@@ -209,6 +209,10 @@ static inline void runPassthrough() {
 
 LoRaMacRegion_t globalRegion = LORAMAC_REGION_EU868;
 
+void LORA_ReInit() {
+  LORA_Init(&LoRaMainCallbacks, &LoRaParamInit);
+}
+
 /**
  * @brief  Main program
  * @param  None
@@ -230,7 +234,7 @@ int main( void )
     }
   }
 
-  HW_GPIO_DeInit( GPIOB, GPIO_PIN_12);
+  //HW_GPIO_DeInit( GPIOB, GPIO_PIN_12);
   HW_GpioInit();
 
   /* Configure the hardware*/
@@ -256,7 +260,7 @@ int main( void )
     /* Handle UART commands */
     CMD_Process();
     
-    LoRaMacProcess( globalRegion );
+    LoRaMacProcess( );
     /*
      * low power section
      */

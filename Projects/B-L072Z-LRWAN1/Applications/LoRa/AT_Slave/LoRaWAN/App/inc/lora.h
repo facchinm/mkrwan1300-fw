@@ -237,6 +237,7 @@ typedef struct sLoRaMainCallback
  */
 void LORA_Init (LoRaMainCallback_t *callbacks, LoRaParam_t* LoRaParam );
 
+void LORA_ReInit();
 /**
  * @brief run Lora classA state Machine 
  * @param [IN] none

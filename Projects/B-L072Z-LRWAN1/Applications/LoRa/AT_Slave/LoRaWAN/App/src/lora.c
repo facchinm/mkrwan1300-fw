@@ -332,7 +332,7 @@ static void MlmeConfirm( MlmeConfirm_t *mlmeConfirm )
                 mibReq.Param.Class = CLASS_B;
                 LoRaMacMibSetRequestConfirm( &mibReq );
 
-                if (globalRegion == LORAMAC_REGION_AU915 || globalRegion == LORAMAC_REGION_US915 || globalRegion == LORAMAC_REGION_US915_HYBRID) {
+                if (globalRegion == LORAMAC_REGION_AU915 || globalRegion == LORAMAC_REGION_US915) {
                   mibReq.Type = MIB_PING_SLOT_DATARATE;
                   mibReq.Param.PingSlotDatarate = DR_8;
                   LoRaMacMibSetRequestConfirm( &mibReq );
@@ -405,10 +405,6 @@ static void MlmeIndication( MlmeIndication_t *MlmeIndication )
         default:
             break;
     }
-}
-
-void TriggerReinit() {
-  DeviceState = DEVICE_STATE_INIT ;
 }
 
 /**
@@ -830,12 +826,12 @@ uint32_t lora_config_networkid_get(void)
 
 uint8_t *lora_config_nwkskey_get(void)
 {
-  return lora_config.NwkSKey;
+  return lora_config.NwkSEncKey;
 }
 
 void lora_config_nwkskey_set(uint8_t nwkSKey[16])
 {
-  memcpy1(lora_config.NwkSKey, nwkSKey, sizeof(lora_config.NwkSKey));
+  memcpy1(lora_config.NwkSEncKey, nwkSKey, sizeof(lora_config.NwkSEncKey));
 }
 
 uint8_t *lora_config_appskey_get(void)

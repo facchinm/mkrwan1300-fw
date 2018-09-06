@@ -138,11 +138,13 @@ void HW_Init( void )
     HW_RTC_Init( );
     
     TraceInit( );   
-            
+
+#if 0
     BSP_LED_Init( LED1 );
     BSP_LED_Init( LED2 );
     BSP_LED_Init( LED3 );
     BSP_LED_Init( LED4 );
+#endif
 
     McuInitialized = true;
   }
