@@ -114,15 +114,7 @@ static lora_configuration_t lora_config =
 
 #include "LoRaMacTest.h"
 
-#if defined( REGION_EU868 )
-/*!
- * LoRaWAN ETSI duty cycle control enable/disable
- *
- * \remark Please note that ETSI mandates duty cycled transmissions. Use only for test purposes
- */
 #define LORAWAN_DUTYCYCLE_ON                        true
-
-#endif
 /*!
  * Default ping slots periodicity
  *
@@ -135,9 +127,6 @@ static lora_configuration_t lora_config =
 #define HEX8(X)   X[0],X[1], X[2],X[3], X[4],X[5], X[6],X[7]
 
 static MlmeReqJoin_t JoinParameters;
-
-
-static uint32_t DevAddr = LORAWAN_DEVICE_ADDRESS;
 
 static LoraErrorStatus LORA_BeaconReq( void);
 static LoraErrorStatus LORA_PingSlotReq( void);
@@ -437,13 +426,6 @@ void LORA_Init (LoRaMainCallback_t *callbacks, LoRaParam_t* LoRaParam )
   LoRaMainCallbacks->BoardGetUniqueId( lora_config.DevEui );  
 #endif
 
-#if (STATIC_DEVICE_ADDRESS != 1)
-  // Random seed initialization
-  srand1( LoRaMainCallbacks->BoardGetRandomSeed( ) );
-  // Choose a random device address
-  DevAddr = randr( 0, 0x01FFFFFF );
-#endif
-
   lora_config_otaa_set(LORA_ENABLE);
   
   LoRaMacPrimitives.MacMcpsConfirm = McpsConfirm;
@@ -452,32 +434,8 @@ void LORA_Init (LoRaMainCallback_t *callbacks, LoRaParam_t* LoRaParam )
   LoRaMacPrimitives.MacMlmeIndication = MlmeIndication;
   LoRaMacCallbacks.GetBatteryLevel = LoRaMainCallbacks->BoardGetBatteryLevel;
   LoRaMacCallbacks.GetTemperatureLevel = LoRaMainCallbacks->BoardGetTemperatureLevel;
-#if defined( REGION_AS923 )
-  LoRaMacInitialization( &LoRaMacPrimitives, &LoRaMacCallbacks, LORAMAC_REGION_AS923 );
-#elif defined( REGION_AU915 )
-  LoRaMacInitialization( &LoRaMacPrimitives, &LoRaMacCallbacks, LORAMAC_REGION_AU915 );
-#elif defined( REGION_CN470 )
-  LoRaMacInitialization( &LoRaMacPrimitives, &LoRaMacCallbacks, LORAMAC_REGION_CN470 );
-#elif defined( REGION_CN779 )
-  LoRaMacInitialization( &LoRaMacPrimitives, &LoRaMacCallbacks, LORAMAC_REGION_CN779 );
-#elif defined( REGION_EU433 )
-  LoRaMacInitialization( &LoRaMacPrimitives, &LoRaMacCallbacks, LORAMAC_REGION_EU433 );
- #elif defined( REGION_IN865 )
-  LoRaMacInitialization( &LoRaMacPrimitives, &LoRaMacCallbacks, LORAMAC_REGION_IN865 );
-#elif defined( REGION_EU868 )
-  LoRaMacInitialization( &LoRaMacPrimitives, &LoRaMacCallbacks, LORAMAC_REGION_EU868 );
-#elif defined( REGION_KR920 )
-  LoRaMacInitialization( &LoRaMacPrimitives, &LoRaMacCallbacks, LORAMAC_REGION_KR920 );
-#elif defined( REGION_US915 )
-  LoRaMacInitialization( &LoRaMacPrimitives, &LoRaMacCallbacks, LORAMAC_REGION_US915 );
-#elif defined( REGION_US915_HYBRID )
-        LoRaMacInitialization( &LoRaMacPrimitives, &LoRaMacCallbacks, LORAMAC_REGION_US915_HYBRID );
-#elif defined( REGION_RU864 )
-        LoRaMacInitialization( &LoRaMacPrimitives, &LoRaMacCallbacks, LORAMAC_REGION_RU864 );
-#else
-    #error "Please define a region in the compiler options."
-#endif
-  
+  LoRaMacInitialization( &LoRaMacPrimitives, &LoRaMacCallbacks, globalRegion );
+
   mibReq.Type = MIB_ADR;
   mibReq.Param.AdrEnable = LoRaParamInit->AdrEnable;
   LoRaMacMibSetRequestConfirm( &mibReq );
@@ -498,13 +456,7 @@ void LORA_Init (LoRaMainCallback_t *callbacks, LoRaParam_t* LoRaParam )
   mibReq.Param.Class= CLASS_A;
   LoRaMacMibSetRequestConfirm( &mibReq );
 
-#if defined( REGION_EU868 )
-  LoRaMacTestSetDutyCycleOn( LORAWAN_DUTYCYCLE_ON );
-
-  lora_config.duty_cycle = LORA_DISABLE;
-#else
-  lora_config.duty_cycle = LORA_ENABLE;
-#endif
+  LoRaMacTestSetDutyCycleOn((globalRegion == LORAMAC_REGION_EU868) ? LORA_ENABLE : LORA_DISABLE);
       
   mibReq.Type = MIB_SYSTEM_MAX_RX_ERROR;
   mibReq.Param.SystemMaxRxError = 10;
@@ -761,29 +713,33 @@ void lora_config_otaa_set(LoraState_t otaa)
   
   if (lora_config.otaa == LORA_ENABLE)
   {
+    #if 0
     PPRINTF("OTAA Mode enabled\n\r"); 
     PPRINTF("DevEui= %02X-%02X-%02X-%02X-%02X-%02X-%02X-%02X\n\r", HEX8(lora_config.DevEui));
     PPRINTF("JoinEui= %02X-%02X-%02X-%02X-%02X-%02X-%02X-%02X\n\r", HEX8(lora_config.JoinEui));
     PPRINTF("AppKey= %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X\n\r", HEX16(lora_config.AppKey));
-    
+    #endif
+
     mibReq.Type = MIB_NETWORK_ACTIVATION;
     mibReq.Param.NetworkActivation = ACTIVATION_TYPE_NONE;
     LoRaMacMibSetRequestConfirm( &mibReq );
   }
   else
   {
+    #if 0
     PPRINTF("ABP Mode enabled\n\r"); 
     PPRINTF("DevEui= %02X-%02X-%02X-%02X-%02X-%02X-%02X-%02X\n\r", HEX8(lora_config.DevEui));
     PPRINTF("DevAdd=  %08X\n\r", DevAddr) ;
     PPRINTF("NwkSKey= %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X\n\r", HEX16(lora_config.NwkSEncKey));
     PPRINTF("AppSKey= %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X\n\r", HEX16(lora_config.AppSKey));
-    
+    #endif
+
     mibReq.Type = MIB_NET_ID;
-    mibReq.Param.NetID = LORAWAN_NETWORK_ID;
+    mibReq.Param.NetID = lora_config.NetworkID;
     LoRaMacMibSetRequestConfirm( &mibReq );
 
     mibReq.Type = MIB_DEV_ADDR;
-    mibReq.Param.DevAddr = DevAddr;
+    mibReq.Param.DevAddr = lora_config.DevAddr;
     LoRaMacMibSetRequestConfirm( &mibReq );
 
     mibReq.Type = MIB_F_NWK_S_INT_KEY;
@@ -850,6 +806,46 @@ uint8_t *lora_config_joineui_get(void)
 void lora_config_joineui_set(uint8_t joineui[8])
 {
   memcpy1(lora_config.JoinEui, joineui, sizeof(lora_config.JoinEui));
+}
+
+uint32_t lora_config_devaddr_get(void)
+{
+  return lora_config.DevAddr;
+}
+
+void lora_config_devaddr_set(uint32_t devaddr)
+{
+  lora_config.DevAddr = devaddr;
+}
+
+void lora_config_networkid_set(uint32_t networkid)
+{
+  lora_config.NetworkID = networkid;
+}
+
+uint32_t lora_config_networkid_get(void)
+{
+  return lora_config.NetworkID;
+}
+
+uint8_t *lora_config_nwkskey_get(void)
+{
+  return lora_config.NwkSKey;
+}
+
+void lora_config_nwkskey_set(uint8_t nwkSKey[16])
+{
+  memcpy1(lora_config.NwkSKey, nwkSKey, sizeof(lora_config.NwkSKey));
+}
+
+uint8_t *lora_config_appskey_get(void)
+{
+  return lora_config.AppSKey;
+}
+
+void lora_config_appskey_set(uint8_t appskey[16])
+{
+  memcpy1(lora_config.AppSKey, appskey, sizeof(lora_config.AppSKey));
 }
 
 uint8_t *lora_config_appkey_get(void)
