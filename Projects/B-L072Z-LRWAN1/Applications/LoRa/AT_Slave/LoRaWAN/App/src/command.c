@@ -701,7 +701,7 @@ static void parse_cmd(const char *cmd)
   else
   if (cmd[2] == '\0')
   {
-    /* status = AT_OK; */
+    com_error(status);
   }
   else
   if (cmd[2] == '?')
@@ -737,23 +737,13 @@ static void parse_cmd(const char *cmd)
           case '\0':    /* nothing after the command */
             status = Current_ATCommand->run(cmd);
             break;
+          case '?':
+            status = Current_ATCommand->get(cmd + 1);
+            break;
           case '=':
           case ' ':
-            if ((cmd[1] == '?') && (cmd[2] == '\0'))
-            {
-              status = Current_ATCommand->get(cmd + 1);
-            }
-            else
-            {
-              status = Current_ATCommand->set(cmd + 1);
-              confirm_set = 1;
-            }
-            break;
-          case '?':
-#ifndef NO_HELP
-            AT_PRINTF(Current_ATCommand->help_string);
-#endif
-            status = AT_OK;
+            status = Current_ATCommand->set(cmd + 1);
+            confirm_set = 1;
             break;
           default:
             /* not recognized */

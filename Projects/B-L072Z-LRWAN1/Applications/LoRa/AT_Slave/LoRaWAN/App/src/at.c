@@ -1182,7 +1182,7 @@ static void print_uint32_as_02x(uint32_t value)
 
 static void print_8_02x(uint8_t *pt)
 {
-  AT_PRINTF("%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x\r",
+  AT_PRINTF("%02x%02x%02x%02x%02x%02x%02x%02x\r",
             pt[0], pt[1], pt[2], pt[3], pt[4], pt[5], pt[6], pt[7]);
 }
 

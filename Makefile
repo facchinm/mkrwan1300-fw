@@ -34,19 +34,20 @@ LDFLAGS = \
 	  -lm -lc -lgcc
 
 DEFINES = \
-	  -DSTM32L072xx \
-	  -DUSE_B_L072Z_LRWAN1 \
-	  -DUSE_FULL_LL_DRIVER \
-	  -DREGION_EU868 \
-	  -DREGION_AS923 \
-	  -DREGION_AU915 \
-	  -DREGION_CN470 \
-	  -DREGION_CN779 \
-	  -DREGION_EU433 \
-	  -DREGION_IN865 \
-	  -DREGION_KR920 \
-	  -DREGION_US915 \
-	  -DREGION_US915_HYBRID
+        -DSTM32L072xx \
+        -DUSE_B_L072Z_LRWAN1 \
+        -DUSE_FULL_LL_DRIVER \
+        -DNO_MAC_PRINTF \
+        -DREGION_EU868 \
+        -DREGION_AS923 \
+        -DREGION_AU915 \
+        -DREGION_CN470 \
+        -DREGION_CN779 \
+        -DREGION_EU433 \
+        -DREGION_IN865 \
+        -DREGION_KR920 \
+        -DREGION_US915 \
+        -DREGION_US915_HYBRID
 
 INCLUDES = \
 	   -IProjects/B-L072Z-LRWAN1/Applications/LoRa/AT_Slave/Core/inc \
@@ -66,42 +67,31 @@ INCLUDES = \
 
 OBJS = \
        Drivers/CMSIS/Device/ST/STM32L0xx/Source/Templates/system_stm32l0xx.o \
+       Drivers/STM32L0xx_HAL_Driver/Src/stm32l0xx_hal.o \
        Drivers/STM32L0xx_HAL_Driver/Src/stm32l0xx_hal_adc.o \
        Drivers/STM32L0xx_HAL_Driver/Src/stm32l0xx_hal_adc_ex.o \
-       Drivers/STM32L0xx_HAL_Driver/Src/stm32l0xx_hal_gpio.o \
-       Drivers/STM32L0xx_HAL_Driver/Src/stm32l0xx_hal_rcc.o \
-       Drivers/STM32L0xx_HAL_Driver/Src/stm32l0xx_hal_rtc.o \
-       Drivers/STM32L0xx_HAL_Driver/Src/stm32l0xx_hal_spi.o \
-       Drivers/STM32L0xx_HAL_Driver/Src/stm32l0xx_hal_dma.o \
-       Drivers/STM32L0xx_HAL_Driver/Src/stm32l0xx_hal_uart.o \
-       Drivers/STM32L0xx_HAL_Driver/Src/stm32l0xx_hal_usart.o \
-       Drivers/STM32L0xx_HAL_Driver/Src/stm32l0xx_hal_uart_ex.o \
        Drivers/STM32L0xx_HAL_Driver/Src/stm32l0xx_hal_cortex.o \
-       Drivers/STM32L0xx_HAL_Driver/Src/stm32l0xx_hal_rcc_ex.o \
-       Drivers/STM32L0xx_HAL_Driver/Src/stm32l0xx_hal_rtc_ex.o \
+       Drivers/STM32L0xx_HAL_Driver/Src/stm32l0xx_hal_dma.o \
+       Drivers/STM32L0xx_HAL_Driver/Src/stm32l0xx_hal_flash.o \
+       Drivers/STM32L0xx_HAL_Driver/Src/stm32l0xx_hal_flash_ex.o \
+       Drivers/STM32L0xx_HAL_Driver/Src/stm32l0xx_hal_gpio.o \
        Drivers/STM32L0xx_HAL_Driver/Src/stm32l0xx_hal_pwr.o \
        Drivers/STM32L0xx_HAL_Driver/Src/stm32l0xx_hal_pwr_ex.o \
-       Drivers/STM32L0xx_HAL_Driver/Src/stm32l0xx_hal.o \
-       Drivers/STM32L0xx_HAL_Driver/Src/stm32l0xx_ll_adc.o \
-       Drivers/STM32L0xx_HAL_Driver/Src/stm32l0xx_ll_gpio.o \
-       Drivers/STM32L0xx_HAL_Driver/Src/stm32l0xx_ll_lpuart.o \
-       Drivers/STM32L0xx_HAL_Driver/Src/stm32l0xx_ll_rcc.o \
-       Drivers/STM32L0xx_HAL_Driver/Src/stm32l0xx_ll_rtc.o \
-       Drivers/STM32L0xx_HAL_Driver/Src/stm32l0xx_ll_spi.o \
+       Drivers/STM32L0xx_HAL_Driver/Src/stm32l0xx_hal_rcc.o \
+       Drivers/STM32L0xx_HAL_Driver/Src/stm32l0xx_hal_rcc_ex.o \
+       Drivers/STM32L0xx_HAL_Driver/Src/stm32l0xx_hal_rtc.o \
+       Drivers/STM32L0xx_HAL_Driver/Src/stm32l0xx_hal_rtc_ex.o \
+       Drivers/STM32L0xx_HAL_Driver/Src/stm32l0xx_hal_spi.o \
+       Drivers/STM32L0xx_HAL_Driver/Src/stm32l0xx_hal_uart.o \
+       Drivers/STM32L0xx_HAL_Driver/Src/stm32l0xx_hal_uart_ex.o \
+       Drivers/STM32L0xx_HAL_Driver/Src/stm32l0xx_hal_usart.o \
+       Drivers/STM32L0xx_HAL_Driver/Src/stm32l0xx_ll_dma.o \
        Drivers/BSP/Components/sx1276/sx1276.o \
+       Drivers/BSP/B-L072Z-LRWAN1/b-l072z-lrwan1.o \
        Drivers/BSP/CMWX1ZZABZ-0xx/mlm32l07x01.o \
        Middlewares/Third_Party/LoRaWAN/Crypto/aes.o \
        Middlewares/Third_Party/LoRaWAN/Crypto/cmac.o \
        Middlewares/Third_Party/LoRaWAN/Crypto/soft-se.o \
-       Middlewares/Third_Party/LoRaWAN/Mac/LoRaMacAdr.o \
-	   Middlewares/Third_Party/LoRaWAN/Mac/LoRaMac.o \
-	   Middlewares/Third_Party/LoRaWAN/Mac/LoRaMacClassB.o \
-	   Middlewares/Third_Party/LoRaWAN/Mac/LoRaMacCommands.o \
-	   Middlewares/Third_Party/LoRaWAN/Mac/LoRaMacConfirmQueue.o \
-	   Middlewares/Third_Party/LoRaWAN/Mac/LoRaMacCrypto.o \
-	   Middlewares/Third_Party/LoRaWAN/Mac/LoRaMacFCntHandler.o \
-	   Middlewares/Third_Party/LoRaWAN/Mac/LoRaMacParser.o \
-	   Middlewares/Third_Party/LoRaWAN/Mac/LoRaMacSerializer.o \
        Middlewares/Third_Party/LoRaWAN/Mac/region/Region.o \
        Middlewares/Third_Party/LoRaWAN/Mac/region/RegionAS923.o \
        Middlewares/Third_Party/LoRaWAN/Mac/region/RegionAU915.o \
@@ -112,10 +102,20 @@ OBJS = \
        Middlewares/Third_Party/LoRaWAN/Mac/region/RegionEU868.o \
        Middlewares/Third_Party/LoRaWAN/Mac/region/RegionIN865.o \
        Middlewares/Third_Party/LoRaWAN/Mac/region/RegionKR920.o \
+       Middlewares/Third_Party/LoRaWAN/Mac/region/RegionRU864.o \
        Middlewares/Third_Party/LoRaWAN/Mac/region/RegionUS915.o \
+       Middlewares/Third_Party/LoRaWAN/Mac/LoRaMac.o \
+       Middlewares/Third_Party/LoRaWAN/Mac/LoRaMacAdr.o \
+       Middlewares/Third_Party/LoRaWAN/Mac/LoRaMacClassB.o \
+       Middlewares/Third_Party/LoRaWAN/Mac/LoRaMacCommands.o \
+       Middlewares/Third_Party/LoRaWAN/Mac/LoRaMacConfirmQueue.o \
+       Middlewares/Third_Party/LoRaWAN/Mac/LoRaMacCrypto.o \
+       Middlewares/Third_Party/LoRaWAN/Mac/LoRaMacFCntHandler.o \
+       Middlewares/Third_Party/LoRaWAN/Mac/LoRaMacParser.o \
+       Middlewares/Third_Party/LoRaWAN/Mac/LoRaMacSerializer.o \
        Middlewares/Third_Party/LoRaWAN/Core/lora-test.o \
-       Middlewares/Third_Party/LoRaWAN/Utilities/queue.o \
        Middlewares/Third_Party/LoRaWAN/Utilities/low_power_manager.o \
+       Middlewares/Third_Party/LoRaWAN/Utilities/queue.o \
        Middlewares/Third_Party/LoRaWAN/Utilities/systime.o \
        Middlewares/Third_Party/LoRaWAN/Utilities/timeServer.o \
        Middlewares/Third_Party/LoRaWAN/Utilities/trace.o \
