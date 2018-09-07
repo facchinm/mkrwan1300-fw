@@ -207,7 +207,7 @@ ATEerror_t at_JoinEUI_get(const char *param)
 ATEerror_t at_JoinEUI_set(const char *param)
 {
   uint8_t JoinEui[8];
-  if (tiny_sscanf(param, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
+  if (tiny_sscanf(param, "%02hhx%02hhx%02hhx%02hhx%02hhx%02hhx%02hhx%02hhx",
                   &JoinEui[0], &JoinEui[1], &JoinEui[2], &JoinEui[3],
                   &JoinEui[4], &JoinEui[5], &JoinEui[6], &JoinEui[7]) != 8)
   {
@@ -408,9 +408,10 @@ ATEerror_t at_TransmitPower_set(const char *param)
 {
   MibRequestConfirm_t mib;
   LoRaMacStatus_t status;
+  uint8_t ignored;
 
   mib.Type = MIB_CHANNELS_TX_POWER;
-  if (tiny_sscanf(param, "%hhu", &mib.Param.ChannelsTxPower) != 1)
+  if (tiny_sscanf(param, "%hhu,%hhu", &ignored, &mib.Param.ChannelsTxPower) != 1)
   {
     return AT_PARAM_ERROR;
   }
@@ -1155,7 +1156,7 @@ static int sscanf_16_hhx(const char *from, uint8_t *pt)
 
 static void print_16_02x(uint8_t *pt)
 {
-  AT_PRINTF("%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x\r",
+  AT_PRINTF("+OK=%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x\r",
             pt[0], pt[1], pt[2], pt[3],
             pt[4], pt[5], pt[6], pt[7],
             pt[8], pt[9], pt[10], pt[11],
@@ -1164,7 +1165,7 @@ static void print_16_02x(uint8_t *pt)
 
 static int sscanf_uint32_as_hhx(const char *from, uint32_t *value)
 {
-  return tiny_sscanf(from, "%02hhx%02hhx%02hhx%02hhx",
+  return tiny_sscanf(from, "+OK=%02hhx%02hhx%02hhx%02hhx",
                      &((unsigned char *)(value))[3],
                      &((unsigned char *)(value))[2],
                      &((unsigned char *)(value))[1],
@@ -1173,7 +1174,7 @@ static int sscanf_uint32_as_hhx(const char *from, uint32_t *value)
 
 static void print_uint32_as_02x(uint32_t value)
 {
-  AT_PRINTF("%02x%02x%02x%02x\r",
+  AT_PRINTF("+OK=%02x%02x%02x%02x\r",
             (unsigned)((unsigned char *)(&value))[3],
             (unsigned)((unsigned char *)(&value))[2],
             (unsigned)((unsigned char *)(&value))[1],
@@ -1182,7 +1183,7 @@ static void print_uint32_as_02x(uint32_t value)
 
 static void print_8_02x(uint8_t *pt)
 {
-  AT_PRINTF("%02x%02x%02x%02x%02x%02x%02x%02x\r",
+  AT_PRINTF("+OK=%02x%02x%02x%02x%02x%02x%02x%02x\r",
             pt[0], pt[1], pt[2], pt[3], pt[4], pt[5], pt[6], pt[7]);
 }
 
