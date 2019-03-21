@@ -1262,6 +1262,27 @@ ATEerror_t at_bat_get(const char *param)
   return AT_OK;
 }
 
+extern LoRaMacRegion_t _globalRegion;
+extern bool _needReinit;
+ATEerror_t at_Band_get(const char *param)
+{
+  print_d(_globalRegion);
+  return AT_OK;
+}
+
+ATEerror_t at_Band_set(const char *param)
+{
+  LoRaMacRegion_t region;
+  if (tiny_sscanf(param, "%hhu", &region)  != 1)
+  {
+    return AT_PARAM_ERROR;
+  }
+  if (region != _globalRegion) {
+	  _globalRegion = region;
+  }
+  return AT_OK;
+}
+
 ATEerror_t at_test_txTone(const char *param)
 {
   return TST_TxTone(param, strlen(param));

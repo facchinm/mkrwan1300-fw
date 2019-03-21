@@ -98,6 +98,8 @@ static LoRaParam_t LoRaParamInit = {LORAWAN_ADR_ON,
                                     
 /* Private functions ---------------------------------------------------------*/
 
+bool _needReinit = true;
+
 /**
  * @brief  Main program
  * @param  None
@@ -125,12 +127,16 @@ int main( void )
   PPRINTF("ATtention command interface\n\r");
   /* USER CODE END 1 */
 
-  /* Configure the Lora Stack*/
-  LORA_Init(&LoRaMainCallbacks, &LoRaParamInit);
-
   /* main loop*/
   while (1)
   {
+
+	if (_needReinit) {
+	  /* Configure the Lora Stack*/
+	  LORA_Init(&LoRaMainCallbacks, &LoRaParamInit);
+	  _needReinit = false;
+	}
+
     /* Handle UART commands */
     CMD_Process();
     
